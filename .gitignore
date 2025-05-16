@@ -1,0 +1,16 @@
+# Archivos de entorno y proyecto
+.Rhistory
+.RData
+.Rproj.user/
+.Rprofile
+
+# renv
+renv/
+renv.lock
+
+# Archivos temporales de compilación
+*.tar.gz
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
