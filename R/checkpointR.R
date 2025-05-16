@@ -1,6 +1,6 @@
-if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
-pacman::p_load(openxlsx, dplyr, tibble)
-
+#' @import dplyr
+#' @import openxlsx
+#' @import tibble
 
 #' Save a checkpoint of an R object with versioning and logging
 #'
