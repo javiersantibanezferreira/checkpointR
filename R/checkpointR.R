@@ -18,9 +18,13 @@
 #' \dontrun{
 #' check_save(mydata, name = "mydata", stage = "preprocessing", comment = "After cleaning")
 #' }
-check_save <- function(stage, obj = procdata, name = "procdata", comment = NULL) {
+check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   if (missing(stage) || stage == "") {
     stop("You must specify a 'stage' to save the checkpoint.")
+  }
+
+  if (is.null(name)) {
+    name <- deparse(substitute(obj))
   }
 
   base_folder <- "4_checkpoint"
