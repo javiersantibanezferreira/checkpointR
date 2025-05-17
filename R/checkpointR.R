@@ -1,13 +1,14 @@
 #' @import dplyr
 #' @import openxlsx
 #' @import tibble
+NULL
 
 #' Save a checkpoint of an R object with versioning and logging
 #'
 #' Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
 #'
 #' @param obj The R object to save. Default is `procdata`.
-#' @param name Character. Name under which the object will be saved.
+#' @param name Character. Name under which the object will be saved. Defaults to the name of the `obj`.
 #' @param stage Character. Required. Stage name to categorize the checkpoint.
 #' @param comment Optional character. Additional comment to record with the checkpoint.
 #'
@@ -18,6 +19,7 @@
 #' \dontrun{
 #' check_save(mydata, name = "mydata", stage = "preprocessing", comment = "After cleaning")
 #' }
+#'
 check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   if (missing(stage) || stage == "") {
     stop("You must specify a 'stage' to save the checkpoint.")
@@ -89,6 +91,7 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
 
   message(sprintf("Checkpoint saved: %s (version %d)", file_name, version))
 }
+
 
 
 #' Load a checkpointed R object by stage, name, and version
@@ -305,7 +308,7 @@ check_attr <- function(stage = NULL, obj = "procdata", version = NULL) {
   }
 
   if (!exists(obj, envir = .GlobalEnv)) {
-    check_load(stage = stage, name = obj, version = version)
+    check_load(stage = stage, name = obj, version = version, quiet = TRUE)
   } else {
     current <- get(obj, envir = .GlobalEnv)
     attr_info <- attr(current, "checkpoint_info")
@@ -337,6 +340,7 @@ check_attr <- function(stage = NULL, obj = "procdata", version = NULL) {
 
   invisible(NULL)
 }
+
 
 #' Check for Equal Checkpoints in a Given Stage
 #'
