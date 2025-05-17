@@ -445,3 +445,120 @@ check_equal <- function(stage) {
 
   return(result)
 }
+
+#' Manage and Display Checkpoint Tags
+#'
+#' \code{check_tags} retrieves and displays information from checkpoint tags stored in an Excel log.
+#'
+#' If no \code{tags_log.xlsx} exists, it will create an empty log file.
+#'
+#' @param stage Optional. A character string specifying the project stage to filter tags.
+#' @param version Optional. An integer specifying a version number for a given stage.
+#'
+#' @return Invisibly returns NULL. Outputs tag information to the console.
+#'
+#' @details
+#' - If called with no arguments, shows the most recent tag overall.
+#' - If called with \code{stage} only, shows all tags for that stage ordered newest to oldest.
+#' - If called with \code{stage} and \code{version}, shows the info for that specific tag.
+#'
+#' The tags log file is saved as \code{"4_checkpoint/tags_log.xlsx"}.
+#'
+#' @examples
+#' \dontrun{
+#' check_tags()                        # Show last tag overall
+#' check_tags(stage = "data_clean")   # Show all tags for 'data_clean' stage
+#' check_tags(stage = "data_clean", version = 2) # Show tag version 2 for 'data_clean'
+#' }
+#'
+#' @export
+check_tags <- function(stage = NULL, version = NULL) {
+  log_path <- file.path("4_checkpoint", "tags_log.xlsx")
+  if (!dir.exists("4_checkpoint")) dir.create("4_checkpoint")
+
+  # Create empty tags log if missing
+  if (!file.exists(log_path)) {
+    empty_df <- data.frame(
+      stage = character(),
+      version = integer(),
+      comment = character(),
+      date = character(),
+      stringsAsFactors = FALSE
+    )
+    openxlsx::write.xlsx(empty_df, log_path)
+  }
+
+  tags <- openxlsx::read.xlsx(log_path)
+
+  # Check empty tags log
+  if (nrow(tags) == 0) {
+    message("No tags found in tags_log.xlsx.")
+    return(invisible(NULL))
+  }
+
+  # Convert date column to POSIXct for ordering
+  tags$date <- as.POSIXct(tags$date, format = "%Y-%m-%d %H:%M:%S")
+
+  # Case: specific stage + version
+  if (!is.null(stage) && !is.null(version)) {
+    tag_row <- tags[tags$stage == stage & tags$version == version, ]
+    if (nrow(tag_row) == 0) {
+      message(sprintf("No tag found for stage '%s' with version %d.", stage, version))
+      return(invisible(NULL))
+    }
+    # Print header
+    cat(sprintf("\nTag details for stage '%s' version v%d:\n\n", stage, version))
+    # Table with version and date with time
+    cat("Version | Date and Time\n")
+    cat("------------------------\n")
+    cat(sprintf("v%d      | %s\n\n", tag_row$version, format(tag_row$date, "%Y-%m-%d %H:%M:%S")))
+    # Comment
+    cat("Comment:\n")
+    cat(sprintf("%s\n", tag_row$comment))
+    return(invisible(NULL))
+  }
+
+  # Case: stage specified only
+  if (!is.null(stage) && is.null(version)) {
+    stage_tags <- tags[tags$stage == stage, ]
+    if (nrow(stage_tags) == 0) {
+      message(sprintf("No tags found for stage '%s'.", stage))
+      return(invisible(NULL))
+    }
+    stage_tags <- stage_tags[order(stage_tags$date, decreasing = TRUE), ]
+
+    # Print header with stage name
+    cat(sprintf("\nAll tags for stage '%s' (newest to oldest):\n\n", stage))
+
+    # Table: Version and Date (with time)
+    cat("Version | Date and Time\n")
+    cat("------------------------\n")
+    for (i in seq_len(nrow(stage_tags))) {
+      cat(sprintf("v%d      | %s\n", stage_tags$version[i], format(stage_tags$date[i], "%Y-%m-%d %H:%M:%S")))
+    }
+    cat("\nComments:\n")
+    for (i in seq_len(nrow(stage_tags))) {
+      cat(sprintf("v%d: %s\n", stage_tags$version[i], stage_tags$comment[i]))
+    }
+    return(invisible(NULL))
+  }
+
+  # Case: no parameters -> show last tag overall
+  if (is.null(stage) && is.null(version)) {
+    last_tag <- tags[which.max(tags$date), ]
+    # Print one line table header
+    cat(sprintf("\nStage     | Version | Date\n"))
+    cat(sprintf("-----------------------------\n"))
+    cat(sprintf("%-9s | v%-6d | %s\n\n", last_tag$stage, last_tag$version, format(last_tag$date, "%Y-%m-%d")))
+    # Empty line
+    cat("\n")
+    # Comment
+    cat(last_tag$comment, "\n")
+    return(invisible(NULL))
+  }
+
+  # Other cases not supported
+  stop("Invalid combination of parameters.")
+}
+
+asdfadsf
