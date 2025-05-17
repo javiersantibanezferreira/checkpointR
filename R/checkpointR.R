@@ -18,7 +18,7 @@
 #' \dontrun{
 #' check_save(mydata, name = "mydata", stage = "preprocessing", comment = "After cleaning")
 #' }
-check_save <- function(stage, obj = procdata, name = "procdata", comment = NULL) {
+check_save <- function(obj = procdata, name = "procdata", stage, comment = NULL) {
   if (missing(stage) || stage == "") {
     stop("You must specify a 'stage' to save the checkpoint.")
   }
