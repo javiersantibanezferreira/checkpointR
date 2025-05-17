@@ -12,7 +12,7 @@ Sistema en R para gestionar checkpoints de bbdd durante análisis de datos. Perm
 ## Índice / Table of Contents
 
 - [Features](#features) / [Funcionalidad](#funcionalidad)
-- [Installation](#nstallation-and-requirements) / [Instalación](#instalación-y-requisitos)
+- [Installation](#installation-and-requirements) / [Instalación](#instalación-y-requisitos)
 - [Basic usage](#basic-usage) / [Uso básico](#uso-básico) 
 - [Parameters](#function-parameters) / [Parámetros](#parámetros-de-las-funciones) 
 - [Saves](#saves) / [Guardado](#guardado) 
@@ -44,7 +44,10 @@ Sistema en R para gestionar checkpoints de bbdd durante análisis de datos. Perm
 - Requires R with packages: `openxlsx`, `dplyr`, `tibble` (installed automatically if missing).  
 - Simply copy and paste the functions into your session or include them in your script.
   It is recommended to install the package directly from GitHub using:
-  ```rremotes::install_github("javiersantibanezferreira/checkpointR")```
+  
+  ```r
+  remotes::install_github("javiersantibanezferreira/checkpointR")
+  ```
 
 
 ---
@@ -132,7 +135,10 @@ Javier S.F.
 - Requiere R con los paquetes: `openxlsx`, `dplyr`, `tibble` (se instala automáticamente si falta).
 - Solo copia y pega las funciones en tu sesión o inclúyelas en tu script.
   Se recomienda instalar el paquete directamente desde GitHub usando:
-  ```r remotes::install_github("javiersantibanezferreira/checkpointR")```
+  
+  ```r
+  remotes::install_github("javiersantibanezferreira/checkpointR")
+  ```
 
 ---
 
