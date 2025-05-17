@@ -7,7 +7,7 @@
 #' Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
 #'
 #' @param obj The R object to save. Default is `procdata`.
-#' @param name Character. Name of the object to save. Default is `"procdata"`.
+#' @param name Character. Name under which the object will be saved.
 #' @param stage Character. Required. Stage name to categorize the checkpoint.
 #' @param comment Optional character. Additional comment to record with the checkpoint.
 #'

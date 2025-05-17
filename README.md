@@ -34,17 +34,18 @@ Sistema en R para gestionar checkpoints de bbdd durante análisis de datos. Perm
 - **Query attributes (`check_attr`)**  
   Shows detailed information (stage, version, date, comment) of loaded or saved objects.
 
-- **Compare identical versions (check_equal)**  
+- **Compare identical versions (check_equal) - experimental**  
   Identifies objects with identical content within a given stage.  
-  *Experimental function*
 
 ---
 
 ## Installation and requirements
 
-- Requires R with packages: `openxlsx`, `dplyr`, `tibble`, `pacman` (installed automatically if missing).  
+- Requires R with packages: `openxlsx`, `dplyr`, `tibble` (installed automatically if missing).  
 - Simply copy and paste the functions into your session or include them in your script.
-  It is recommended to place the script in the project folder and load it with `source("checkpoint.R")`.
+  It is recommended to install the package directly from GitHub using:
+  ```rremotes::install_github("javiersantibanezferreira/checkpointR")```
+
 
 ---
 
@@ -73,19 +74,19 @@ check_equal("stage")
 | Function         | Parameter    | Description                          | Required / Default        |
 | ---------------- | ------------ | ------------------------------------ | ------------------------- |
 | `check_save`     | `obj`        | Object to save                       | `procdata` by default     |
-|                  | `nombre`     | Name to save the object as           | `"procdata"` by default   |
-|                  | `etapa`      | Name of the analysis stage           | Required                  |
-|                  | `comentario` | Optional comment for the checkpoint  | Optional                  |
-| `check_load`     | `etapa`      | Stage to load checkpoint from        | Required                  |
-|                  | `nombre`     | Name of the object to load           | `"procdata"` by default   |
+|                  | `name`       | Name to save the object as           | Name of `obj` by default  |
+|                  | `stage`      | Name of the analysis stage           | Required                  |
+|                  | `comment`    | Optional comment for the checkpoint  | Optional                  |
+| `check_load`     | `stage`      | Stage to load checkpoint from        | Required                  |
+|                  | `name`       | Name of the object to load           | `"procdata"` by default   |
 |                  | `version`    | Specific version to load             | Latest version by default |
 |                  | `envir`      | Environment to load objects into     | `.GlobalEnv` by default   |
-| `check_overview` | `etapa`      | Filter summary by stage              | Optional                  |
+| `check_overview` | `stage`      | Filter summary by stage              | Optional                  |
 |                  | `envir`      | Environment to search loaded objects | `.GlobalEnv` by default   |
-| `check_attr`     | `etapa`      | Stage to query attributes            | Optional                  |
+| `check_attr`     | `stage`      | Stage to query attributes            | Optional                  |
 |                  | `obj`        | Name of the object to query          | `"procdata"` by default   |
 |                  | `version`    | Version to query                     | Latest version by default |
-| `check_equal`*   | `etapa`      | Check for duplicate versions         | Required                  |
+| `check_equal`*   | `stage`      | Check for duplicate versions         | Required                  |
 
 **(experimental)*
 
@@ -121,17 +122,17 @@ Javier S.F.
 - **Consultar atributos (`check_attr`)**  
   Muestra información detallada (etapa, versión, fecha, comentario) de los objetos cargados o guardados.
 
-- **Comparar versiones (`check_equal`)**  
+- **Comparar versiones (`check_equal`) - experimental**  
   Identifica si existen objetos con contenido idéntico dentro de una misma etapa.  
-  *Fase experimental*
 
 ---
 
 ## Instalación y requisitos
 
-- Requiere R con los paquetes: `openxlsx`, `dplyr`, `tibble`, `pacman` (se instala automáticamente si falta).
+- Requiere R con los paquetes: `openxlsx`, `dplyr`, `tibble` (se instala automáticamente si falta).
 - Solo copia y pega las funciones en tu sesión o inclúyelas en tu script.
-  Se recomienda agregar script en carpeta de proyecto y llamar con `source(checkpoint.R)`
+  Se recomienda instalar el paquete directamente desde GitHub usando:
+  ```r remotes::install_github("javiersantibanezferreira/checkpointR")```
 
 ---
 
@@ -162,7 +163,7 @@ check_equal("etapa")
 | Función          | Parámetro    | Descripción                            | Obligatorio / Por defecto  |
 | ---------------- | ------------ | -------------------------------------- | -------------------------- |
 | `check_save`     | `obj`        | Objeto a guardar                       | `procdata` por defecto     |
-|                  | `nombre`     | Nombre con que se guardará el objeto   | `"procdata"` por defecto   |
+|                  | `nombre`     | Nombre con que se guardará el objeto   | Igual a `obj` por defecto  |
 |                  | `etapa`      | Nombre de la etapa o fase del análisis | Obligatorio                |
 |                  | `comentario` | Comentario opcional para el checkpoint | Opcional                   |
 | `check_load`     | `etapa`      | Etapa para cargar el checkpoint        | Obligatorio                |
