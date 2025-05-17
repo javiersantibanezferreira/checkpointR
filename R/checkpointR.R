@@ -561,4 +561,63 @@ check_tags <- function(stage = NULL, version = NULL) {
   stop("Invalid combination of parameters.")
 }
 
-asdfadsf
+#' Add a new checkpoint tag with comment
+#'
+#' @param stage Character. The project stage (required).
+#' @param comment Character. Optional comment describing the stage or changes.
+#' @return Invisibly returns the new tag info as a data.frame.
+#' @export
+check_tag <- function(stage, comment = "") {
+  if (missing(stage) || !is.character(stage) || length(stage) != 1) {
+    stop("You must provide a single 'stage' string.")
+  }
+
+  folder <- "4_checkpoint"
+  if (!dir.exists(folder)) dir.create(folder)
+
+  file_path <- file.path(folder, "tags_log.xlsx")
+
+  # Load openxlsx package (assumes user installed it already)
+  if (!requireNamespace("openxlsx", quietly = TRUE)) {
+    stop("Package 'openxlsx' required but not installed.")
+  }
+
+  # Load existing tags if file exists
+  if (file.exists(file_path)) {
+    tags_log <- openxlsx::read.xlsx(file_path)
+  } else {
+    # Create empty data.frame if no file
+    tags_log <- data.frame(
+      stage = character(),
+      version = integer(),
+      date = as.POSIXct(character()),
+      comment = character(),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # Get next version for this stage
+  existing_versions <- tags_log$version[tags_log$stage == stage]
+  next_version <- if (length(existing_versions) == 0) 1 else max(existing_versions) + 1
+
+  # Current datetime
+  now <- Sys.time()
+
+  # New entry
+  new_tag <- data.frame(
+    stage = stage,
+    version = next_version,
+    date = now,
+    comment = comment,
+    stringsAsFactors = FALSE
+  )
+
+  # Append and order by date descending
+  tags_log <- rbind(tags_log, new_tag)
+  tags_log <- tags_log[order(tags_log$date, decreasing = TRUE), ]
+
+  # Save back to excel
+  openxlsx::write.xlsx(tags_log, file = file_path, overwrite = TRUE)
+
+  invisible(new_tag)
+}
