@@ -12,7 +12,7 @@ Sistema en R para gestionar checkpoints de bbdd durante análisis de datos. Perm
 ## Índice / Table of Contents
 
 - [Features](#features) / [Funcionalidad](#funcionalidad)
-- [Installation](#installation) / [Instalación](#instalación-y-requisitos)
+- [Installation](#nstallation-and-requirements) / [Instalación](#instalación-y-requisitos)
 - [Basic usage](#basic-usage) / [Uso básico](#uso-básico) 
 - [Parameters](#function-parameters) / [Parámetros](#parámetros-de-las-funciones) 
 - [Saves](#saves) / [Guardado](#guardado) 
