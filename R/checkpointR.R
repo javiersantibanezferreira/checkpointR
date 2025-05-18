@@ -3,41 +3,26 @@
 #' @import tibble
 NULL
 
-#' Save a checkpoint of an R object with versioning and logging
+#' Save a checkpoint of an R object with versioning and styled logging
 #'
-#' Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
+#' Saves an R object to a versioned .rds file and logs the event in a formatted Excel sheet.
 #'
-#' @param obj The R object to save. Default is `procdata`.
-#' @param name Character. Name under which the object will be saved. Defaults to the name of the `obj`.
-#' @param stage Character. Required. Stage name to categorize the checkpoint.
-#' @param comment Optional character. Additional comment to record with the checkpoint.
+#' @param stage Character. Required. Stage of the project.
+#' @param obj The R object to save. Defaults to `procdata`.
+#' @param name Character. Optional. Name of the object to save. If NULL, uses the variable name.
+#' @param comment Character. Optional. A comment to include in the log.
 #'
-#' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
+#' @return Invisibly returns NULL. Side effect: saves an RDS file and updates Excel log.
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_save(mydata, name = "mydata", stage = "preprocessing", comment = "After cleaning")
-#' }
-#'
 check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
-  if (missing(stage) || stage == "") {
-    stop("You must specify a 'stage' to save the checkpoint.")
-  }
-
-  if (is.null(name)) {
-    name <- deparse(substitute(obj))
-  }
+  if (missing(stage) || stage == "") stop("You must specify a 'stage' to save the checkpoint.")
+  if (is.null(name)) name <- deparse(substitute(obj))
 
   base_folder <- "4_checkpoint"
-  if (!dir.exists(base_folder)) {
-    dir.create(base_folder)
-  }
+  if (!dir.exists(base_folder)) dir.create(base_folder)
 
   stage_folder <- file.path(base_folder, stage)
-  if (!dir.exists(stage_folder)) {
-    dir.create(stage_folder)
-  }
+  if (!dir.exists(stage_folder)) dir.create(stage_folder)
 
   log_path <- file.path(base_folder, "log.xlsx")
 
@@ -45,51 +30,106 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
     log <- openxlsx::read.xlsx(log_path)
   } else {
     log <- data.frame(
-      date = character(),
-      stage = character(),
-      name = character(),
-      version = numeric(),
-      comment = character(),
-      file = character(),
+      STAGE = character(),
+      NAME = character(),
+      VERSION = numeric(),
+      DATE = character(),
+      COMMENT = character(),
+      FILE = character(),
       stringsAsFactors = FALSE
     )
   }
 
-  subset_versions <- log[log$stage == stage & log$name == name, ]
-  if (nrow(subset_versions) == 0) {
-    version <- 1
-  } else {
-    version <- max(subset_versions$version) + 1
-  }
+  # Calcular versión
+  subset_versions <- log[log$STAGE == stage & log$NAME == name, ]
+  version <- if (nrow(subset_versions) == 0) 1 else max(subset_versions$VERSION) + 1
 
-  attr(obj, "checkpoint_info") <- list(
-    name = name,
-    stage = stage,
-    version = version
-  )
-
-  attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
-
+  # Guardar objeto
   file_name <- sprintf("%s_%s_v%d.rds", stage, name, version)
   save_path <- file.path(stage_folder, file_name)
-
   saveRDS(obj, save_path)
 
+  # Agregar atributos
+  attr(obj, "checkpoint_info") <- list(name = name, stage = stage, version = version)
+  attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
+
+  # Nueva entrada
+  now <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   new_log <- data.frame(
-    date = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-    stage = stage,
-    name = name,
-    version = version,
-    comment = ifelse(is.null(comment), "", comment),
-    file = file.path(stage, file_name),
+    STAGE = stage,
+    NAME = name,
+    VERSION = version,
+    DATE = now,
+    COMMENT = ifelse(is.null(comment), "", comment),
+    FILE = file.path(stage, file_name),
     stringsAsFactors = FALSE
   )
-
   log <- rbind(log, new_log)
 
-  openxlsx::write.xlsx(log, log_path, overwrite = TRUE)
+  # --- Ordenar el log ---
+  log$DATE_POSIX <- as.POSIXct(log$DATE)
 
-  message(sprintf("Checkpoint saved: %s (version %d)", file_name, version))
+  log <- log |>
+    dplyr::group_by(STAGE) |>
+    dplyr::mutate(MAX_STAGE_DATE = max(DATE_POSIX)) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(NAME_PRIORITY = ifelse(NAME == "procdata", 0, 1)) |>
+    dplyr::arrange(
+      dplyr::desc(MAX_STAGE_DATE),
+      NAME_PRIORITY,
+      NAME,
+      dplyr::desc(DATE_POSIX)
+    ) |>
+    dplyr::select(-MAX_STAGE_DATE, -NAME_PRIORITY, -DATE_POSIX)
+
+  # --- Escribir con formato ---
+  wb <- openxlsx::createWorkbook()
+  openxlsx::addWorksheet(wb, "log")
+
+  # Encabezado
+  header_style <- openxlsx::createStyle(textDecoration = "bold", halign = "center")
+  openxlsx::writeData(wb, "log", log, headerStyle = header_style)
+
+  # Centramos columnas VERSION y DATE
+  center_style <- openxlsx::createStyle(halign = "center")
+  openxlsx::addStyle(wb, "log", style = center_style, cols = 3, rows = 2:(nrow(log)+1), gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", style = center_style, cols = 4, rows = 2:(nrow(log)+1), gridExpand = TRUE)
+
+  # Cortar texto en FILE
+  openxlsx::addStyle(wb, "log",
+                     style = openxlsx::createStyle(wrapText = FALSE, valign = "top", textRotation = 0),
+                     cols = 6, rows = 2:(nrow(log)+1), gridExpand = TRUE
+  )
+  openxlsx::setColWidths(wb, "log", cols = 6, widths = nchar("FILE") + 2)
+
+  # Ajustar anchos del resto
+  openxlsx::setColWidths(wb, "log", cols = 1:5, widths = "auto")
+
+  # Colorear filas alternadas por stage
+  stage_vector <- log$STAGE
+  unique_stages <- unique(stage_vector)
+  gray <- "#F2F2F2"
+  white <- "#FFFFFF"
+  sep_color <- "#B0B0B0"
+
+  current_row <- 2
+  for (i in seq_along(unique_stages)) {
+    stage_rows <- which(stage_vector == unique_stages[i]) + 1
+    fill_color <- if (i %% 2 == 0) gray else white
+    fill_style <- openxlsx::createStyle(fgFill = fill_color)
+    openxlsx::addStyle(wb, "log", style = fill_style, rows = stage_rows, cols = 1:6, gridExpand = TRUE)
+
+    # Línea separadora
+    if (i < length(unique_stages)) {
+      sep_row <- max(stage_rows) + 1
+      sep_style <- openxlsx::createStyle(border = "top", borderStyle = "medium")
+      openxlsx::addStyle(wb, "log", style = sep_style, rows = sep_row, cols = 1:6, gridExpand = TRUE)
+    }
+  }
+
+  openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
+  message(sprintf("\u2705 Checkpoint '%s' version v%d saved.", name, version))
+  invisible(NULL)
 }
 
 
@@ -116,27 +156,28 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
                        envir = .GlobalEnv, quiet = FALSE) {
   stage_folder <- file.path(folder, stage)
   log_path <- file.path(folder, "log.xlsx")
+
   if (!file.exists(log_path)) {
     stop("Log file not found in ", folder)
   }
 
   log <- openxlsx::read.xlsx(log_path)
-  filtered_log <- log[log$stage == stage & log$name == name, ]
+  filtered_log <- log[log$STAGE == stage & log$NAME == name, ]
 
   if (nrow(filtered_log) == 0) {
     stop(sprintf("No checkpoints found for stage '%s' and name '%s'.", stage, name))
   }
 
   if (is.null(version)) {
-    version <- max(filtered_log$version)
+    version <- max(filtered_log$VERSION)
   }
 
-  version_log <- filtered_log[filtered_log$version == version, ]
+  version_log <- filtered_log[filtered_log$VERSION == version, ]
   if (nrow(version_log) == 0) {
     stop(sprintf("Version %d not found for stage '%s' and name '%s'.", version, stage, name))
   }
 
-  file_name <- basename(version_log$file)
+  file_name <- basename(version_log$FILE)
   file_path <- file.path(stage_folder, file_name)
 
   if (!file.exists(file_path)) {
@@ -155,11 +196,14 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
   date <- format(file.info(file_path)$ctime, "%Y-%m-%d")
 
   if (!quiet) {
-    cat(sprintf("\n  %-8s | %-7s | %-7s | %s\n", "name", "stage", "version", "date"))
+    cat("\n✅ Loaded checkpoint:\n")
+    cat(sprintf("  %-8s | %-7s | %-7s | %s\n", "NAME", "STAGE", "VERSION", "DATE"))
     cat(sprintf("  %-8s | %-7s | %-7d | %s\n\n", name, stage, version, date))
   }
+
   invisible(NULL)
 }
+
 
 
 #' Overview of available and loaded checkpoints
