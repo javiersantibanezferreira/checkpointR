@@ -40,20 +40,16 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
     )
   }
 
-  # Calcular versión
   subset_versions <- log[log$STAGE == stage & log$NAME == name, ]
   version <- if (nrow(subset_versions) == 0) 1 else max(subset_versions$VERSION) + 1
 
-  # Guardar objeto
   file_name <- sprintf("%s_%s_v%d.rds", stage, name, version)
   save_path <- file.path(stage_folder, file_name)
   saveRDS(obj, save_path)
 
-  # Agregar atributos
   attr(obj, "checkpoint_info") <- list(name = name, stage = stage, version = version)
   attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
 
-  # Nueva entrada
   now <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   new_log <- data.frame(
     STAGE = stage,
@@ -64,11 +60,11 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
     FILE = file.path(stage, file_name),
     stringsAsFactors = FALSE
   )
+
   log <- rbind(log, new_log)
 
-  # --- Ordenar el log ---
+  # Reordenar según prioridad
   log$DATE_POSIX <- as.POSIXct(log$DATE)
-
   log <- log |>
     dplyr::group_by(STAGE) |>
     dplyr::mutate(MAX_STAGE_DATE = max(DATE_POSIX)) |>
@@ -82,53 +78,48 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
     ) |>
     dplyr::select(-MAX_STAGE_DATE, -NAME_PRIORITY, -DATE_POSIX)
 
-  # --- Escribir con formato ---
+  # Formato Excel
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
 
-  # Encabezado
+  # Estilos
   header_style <- openxlsx::createStyle(textDecoration = "bold", halign = "center")
+  center_style <- openxlsx::createStyle(halign = "center")
+  wrap_style <- openxlsx::createStyle(wrapText = FALSE)
+
   openxlsx::writeData(wb, "log", log, headerStyle = header_style)
 
-  # Centramos columnas VERSION y DATE
-  center_style <- openxlsx::createStyle(halign = "center")
-  openxlsx::addStyle(wb, "log", style = center_style, cols = 3, rows = 2:(nrow(log)+1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", style = center_style, cols = 4, rows = 2:(nrow(log)+1), gridExpand = TRUE)
+  n <- nrow(log)
+  openxlsx::addStyle(wb, "log", center_style, cols = 3, rows = 1:(n + 1), gridExpand = TRUE)  # VERSION
+  openxlsx::addStyle(wb, "log", center_style, cols = 4, rows = 2:(n + 1), gridExpand = TRUE)  # DATE
+  openxlsx::addStyle(wb, "log", wrap_style, cols = 6, rows = 2:(n + 1), gridExpand = TRUE)    # FILE
 
-  # Cortar texto en FILE
-  openxlsx::addStyle(wb, "log",
-                     style = openxlsx::createStyle(wrapText = FALSE, valign = "top", textRotation = 0),
-                     cols = 6, rows = 2:(nrow(log)+1), gridExpand = TRUE
-  )
-  openxlsx::setColWidths(wb, "log", cols = 6, widths = nchar("FILE") + 2)
-
-  # Ajustar anchos del resto
+  # Anchos
   openxlsx::setColWidths(wb, "log", cols = 1:5, widths = "auto")
+  openxlsx::setColWidths(wb, "log", cols = 3, widths = 10) # ancho un poco más para VERSION
+  openxlsx::setColWidths(wb, "log", cols = 6, widths = nchar("FILE") + 1) # cortar FILE por ancho
 
-  # Colorear filas alternadas por stage
+  # Colorear y líneas entre stages
   stage_vector <- log$STAGE
   unique_stages <- unique(stage_vector)
   gray <- "#F2F2F2"
   white <- "#FFFFFF"
-  sep_color <- "#B0B0B0"
+  border_style <- openxlsx::createStyle(border = "top", borderStyle = "thick")
 
-  current_row <- 2
   for (i in seq_along(unique_stages)) {
     stage_rows <- which(stage_vector == unique_stages[i]) + 1
     fill_color <- if (i %% 2 == 0) gray else white
     fill_style <- openxlsx::createStyle(fgFill = fill_color)
     openxlsx::addStyle(wb, "log", style = fill_style, rows = stage_rows, cols = 1:6, gridExpand = TRUE)
 
-    # Línea separadora
-    if (i < length(unique_stages)) {
-      sep_row <- max(stage_rows) + 1
-      sep_style <- openxlsx::createStyle(border = "top", borderStyle = "medium")
-      openxlsx::addStyle(wb, "log", style = sep_style, rows = sep_row, cols = 1:6, gridExpand = TRUE)
+    # Línea separadora superior
+    if (length(stage_rows) > 0) {
+      openxlsx::addStyle(wb, "log", style = border_style, rows = min(stage_rows), cols = 1:6, gridExpand = TRUE)
     }
   }
 
   openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
-  message(sprintf("\u2705 Checkpoint '%s' version v%d saved.", name, version))
+  message(sprintf("✅ Checkpoint '%s' version v%d saved.", name, version))
   invisible(NULL)
 }
 
@@ -203,7 +194,6 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
 
   invisible(NULL)
 }
-
 
 
 #' Overview of available and loaded checkpoints
@@ -572,29 +562,49 @@ check_tag <- function(stage, comment = "") {
   tags_log <- rbind(tags_log, new_row)
   tags_log <- tags_log[order(tags_log$DATE_UNIX, decreasing = TRUE), ]
 
-  # Escribir con formato
+  # === FORMATO DE EXCEL ===
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "Tags")
 
-  openxlsx::writeData(wb, sheet = 1, x = tags_log, headerStyle = openxlsx::createStyle(textDecoration = "bold"))
+  # Escribir datos
+  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1")  # Azul pastel
+  openxlsx::writeData(wb, sheet = 1, x = tags_log, headerStyle = header_style)
+  # Línea negra fina debajo de la fila de encabezado
+  header_border <- openxlsx::createStyle(border = "bottom", borderColour = "black")
+  openxlsx::addStyle(wb, sheet = 1, style = header_border, rows = 1, cols = 1:4, gridExpand = TRUE, stack = TRUE)
 
-  # Centrar columnas VERSION (2) y DATE (3)
+  # Estilo centrado
   center_style <- openxlsx::createStyle(halign = "center")
   openxlsx::addStyle(wb, 1, center_style, cols = 2, rows = 2:(nrow(tags_log) + 1), gridExpand = TRUE)
   openxlsx::addStyle(wb, 1, center_style, cols = 3, rows = 2:(nrow(tags_log) + 1), gridExpand = TRUE)
 
-  # Ajustar ancho automático de columnas 1:4
+  # Colores alternos por STAGE (blanco y gris claro)
+  unique_stages <- unique(tags_log$STAGE)
+  row_offset <- 1
+  for (i in seq_along(unique_stages)) {
+    rows <- which(tags_log$STAGE == unique_stages[i]) + 1  # +1 por encabezado
+    fill_color <- if ((i %% 2) == 1) "#FFFFFF" else "#F2F2F2"
+    style <- openxlsx::createStyle(fgFill = fill_color)
+    openxlsx::addStyle(wb, 1, style, cols = 1:4, rows = rows, gridExpand = TRUE)
+
+    # Línea negra fina abajo del grupo
+    last_row <- max(rows)
+    border_style <- openxlsx::createStyle(border = "bottom", borderColour = "black")
+    openxlsx::addStyle(wb, 1, border_style, cols = 1:4, rows = last_row, gridExpand = TRUE, stack = TRUE)
+  }
+
+  # Ancho columnas 1 a 4 automático
   openxlsx::setColWidths(wb, 1, cols = 1:4, widths = "auto")
 
-  # Ocultar columna DATE_UNIX (col 5) simulando ancho mínimo
-  openxlsx::setColWidths(wb, 1, cols = 5, widths = 0.01)
+  openxlsx::setColWidths(wb, sheet = 1, cols = 5, widths = 0, hidden = TRUE)
 
-  # Guardar
+  # Guardar archivo
   openxlsx::saveWorkbook(wb, file = file_path, overwrite = TRUE)
 
   message("✅ Tag saved successfully.")
   invisible(new_row)
 }
+
 
 
 
