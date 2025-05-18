@@ -8,43 +8,38 @@
 "_PACKAGE"
 NULL
 
-#' Save a checkpoint of an R object
+#' Save a checkpoint of an R object with versioning and logging
 #'
-#' Saves an object to a versioned .rds file and logs the save with metadata in Excel.
+#' Saves an object to a versioned .rds file and logs the event in a structured Excel file.
 #'
-#' @param stage Character. Stage name.
-#' @param obj R object to save. Defaults to `procdata`.
-#' @param name Optional. Name of the object. Inferred if NULL.
-#' @param comment Optional. Text comment for the log.
-#' @param ID Optional. Unique identifier containing stage, name, version, and optionally tag.
+#' @param obj The R object to save. Defaults to `procdata`.
+#' @param name Optional. Character. Name to save the object as. Defaults to name of `obj`.
+#' @param stage Character. Required. Project stage to categorize the checkpoint.
+#' @param comment Optional. Comment to include in the log.
 #'
-#' @return Invisible NULL. Saves .rds and updates log.xlsx.
+#' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
 #' @export
-check_save <- function(stage = NULL, obj = procdata, name = NULL, comment = NULL, ID = NULL) {
-  args <- normalize_args(stage = stage, name = name, comment = comment, obj = obj, ID = ID)
+check_save <- function(obj = procdata, name = NULL, stage, comment = NULL) {
+  args <- normalize_args(stage = stage, name = name, comment = comment, obj = obj)
 
-  stage <- args$stage
-  name <- args$name
-  comment <- args$comment
-  obj <- args$obj
-  ID <- args$ID
+  folder <- "4_checkpoint"
+  if (!dir.exists(folder)) dir.create(folder)
 
-  base_folder <- "4_checkpoint"
-  if (!dir.exists(base_folder)) dir.create(base_folder)
-
-  stage_folder <- file.path(base_folder, stage)
-  if (!dir.exists(stage_folder)) dir.create(stage_folder)
-
-  log_path <- file.path(base_folder, "log.xlsx")
+  log_path <- file.path(folder, "log.xlsx")
 
   if (file.exists(log_path)) {
-    log <- openxlsx::read.xlsx(log_path)
-    log <- upgrade_log_format(log)
+    log_df <- openxlsx::read.xlsx(log_path)
+    # Asegurar columnas obligatorias en orden correcto
+    if (!"TAG" %in% names(log_df)) log_df$TAG <- ""
+    if (!"IS_TAG" %in% names(log_df)) log_df$IS_TAG <- FALSE
+    if (!"ID" %in% names(log_df)) log_df$ID <- mapply(generate_id, log_df$STAGE, log_df$NAME, log_df$VERSION)
+    log_df <- log_df[, c("TAG", "STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")]
   } else {
-    log <- data.frame(
+    log_df <- data.frame(
+      TAG = character(),
       STAGE = character(),
       NAME = character(),
-      VERSION = numeric(),
+      VERSION = integer(),
       DATE = character(),
       COMMENT = character(),
       ID = character(),
@@ -53,82 +48,88 @@ check_save <- function(stage = NULL, obj = procdata, name = NULL, comment = NULL
       IS_TAG = logical(),
       stringsAsFactors = FALSE
     )
+
   }
 
-  version_subset <- log[log$STAGE == stage & log$NAME == name, ]
-  version <- if (nrow(version_subset) == 0) 1 else max(version_subset$VERSION, na.rm = TRUE) + 1
-  file_name <- sprintf("%s_%s_v%d.rds", stage, name, version)
-  file_path <- file.path(stage_folder, file_name)
-  saveRDS(obj, file_path)
+  subset_versions <- log_df[log_df$STAGE == args$stage & log_df$NAME == args$name & log_df$IS_TAG == FALSE, ]
+  version <- if (nrow(subset_versions) == 0) 1 else max(subset_versions$VERSION) + 1
 
-  attr(obj, "checkpoint_info") <- list(name = name, stage = stage, version = version)
-  attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
+  file_name <- sprintf("%s_%s_v%d.rds", args$stage, args$name, version)
+  save_path <- file.path(folder, args$stage, file_name)
+  if (!dir.exists(dirname(save_path))) dir.create(dirname(save_path), recursive = TRUE)
+
+  saveRDS(obj, save_path)
 
   now <- Sys.time()
-  ID <- generate_id(stage = stage, name = name, version = version)
+  now_unix <- as.numeric(now)
+  ID <- generate_id(stage = args$stage, name = args$name, version = version)
+
   new_row <- data.frame(
-    STAGE = stage,
-    NAME = name,
+    TAG = "",
+    STAGE = args$stage,
+    NAME = args$name,
     VERSION = version,
     DATE = format(now, "%Y-%m-%d %H:%M:%S"),
-    COMMENT = ifelse(is.null(comment), "", comment),
+    COMMENT = ifelse(is.null(args$comment), "", args$comment),
     ID = ID,
-    FILE = file.path(stage, file_name),
-    DATE_UNIX = as.numeric(now),
+    FILE = file.path(args$stage, file_name),
+    DATE_UNIX = now_unix,
     IS_TAG = FALSE,
     stringsAsFactors = FALSE
   )
 
-  log <- rbind(log, new_row)
-  log <- log[, c("STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")]
+  log_df <- rbind(log_df, new_row)
 
-  # === Excel styling ===
+  # === FORMATO EXCEL ===
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
 
-  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1", halign = "center")
+  header_style <- openxlsx::createStyle(textDecoration = "bold", halign = "center", fgFill = "#DCE6F1")
+  openxlsx::writeData(wb, "log", log_df, headerStyle = header_style)
+
   border_style <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-  center_style <- openxlsx::createStyle(halign = "center")
-  nowrap_style <- openxlsx::createStyle(wrapText = FALSE)
+  openxlsx::addStyle(wb, "log", style = border_style, rows = 1, cols = 1:ncol(log_df), gridExpand = TRUE)
+
   gray <- "#F2F2F2"
   white <- "#FFFFFF"
-
-  openxlsx::writeData(wb, "log", log, headerStyle = header_style)
-  openxlsx::addStyle(wb, "log", header_style, rows = 1, cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
-  openxlsx::addStyle(wb, "log", border_style, rows = 1, cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
-
-  # Aplicar color y bordes por grupo STAGE
-  stage_vector <- log$STAGE
-  unique_stages <- unique(stage_vector)
-  row_colors <- c(white, gray)
-
+  unique_stages <- unique(log_df$STAGE)
   for (i in seq_along(unique_stages)) {
-    rows <- which(stage_vector == unique_stages[i]) + 1
-    fill_color <- row_colors[(i %% 2) + 1]
+    rows <- which(log_df$STAGE == unique_stages[i]) + 1
+    fill_color <- if ((i %% 2) == 1) white else gray
     fill_style <- openxlsx::createStyle(fgFill = fill_color)
+    openxlsx::addStyle(wb, "log", style = fill_style, rows = rows, cols = 1:ncol(log_df), gridExpand = TRUE)
 
-    openxlsx::addStyle(wb, "log", style = fill_style, rows = rows, cols = 1:ncol(log), gridExpand = TRUE)
-    openxlsx::addStyle(wb, "log", style = border_style, rows = max(rows), cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
+    last_row <- max(rows)
+    openxlsx::addStyle(wb, "log", style = border_style, rows = last_row, cols = 1:ncol(log_df), gridExpand = TRUE, stack = TRUE)
   }
 
-  # Estilo centrado para VERSION y DATE (col 3 y 4)
-  openxlsx::addStyle(wb, "log", style = center_style, rows = 2:(nrow(log) + 1), cols = 3, gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", style = center_style, rows = 2:(nrow(log) + 1), cols = 4, gridExpand = TRUE)
+  # Alineación y ancho
+  center_style <- openxlsx::createStyle(halign = "center")
+  nowrap_style <- openxlsx::createStyle(wrapText = FALSE)
+  openxlsx::addStyle(wb, "log", center_style, cols = which(names(log_df) %in% c("VERSION", "DATE")), rows = 2:(nrow(log_df)+1), gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", nowrap_style, cols = which(names(log_df) == "FILE"), rows = 2:(nrow(log_df)+1), gridExpand = TRUE)
 
-  # nowrap para FILE (col 7)
-  openxlsx::addStyle(wb, "log", style = nowrap_style, rows = 2:(nrow(log) + 1), cols = 7, gridExpand = TRUE)
+  # Anchos automáticos y ajustes especiales
+  visible_cols <- setdiff(names(log_df), c("DATE_UNIX", "IS_TAG"))
+  for (col in visible_cols) {
+    idx <- which(names(log_df) == col)
+    width <- if (col == "FILE") max(nchar("FILE")) else "auto"
+    openxlsx::setColWidths(wb, "log", cols = idx, widths = width)
+  }
 
-  # Ancho automático en STAGE, NAME, VERSION, DATE, COMMENT, ID
-  openxlsx::setColWidths(wb, "log", cols = 1:6, widths = "auto")
-  openxlsx::setColWidths(wb, "log", cols = 7, widths = max(nchar("FILE")) + 2)
-
-  # Ocultar DATE_UNIX (col 8) e IS_TAG (col 9)
-  openxlsx::setColWidths(wb, "log", cols = 8:9, widths = 0, hidden = TRUE)
+  # Ocultar columnas DATE_UNIX e IS_TAG
+  for (col in c("DATE_UNIX", "IS_TAG")) {
+    idx <- which(names(log_df) == col)
+    openxlsx::setColWidths(wb, "log", cols = idx, widths = 0, hidden = TRUE)
+  }
 
   openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
-  message(sprintf("🏷️  Checkpoint saved: [%s] %s v%d → %s", stage, name, version, file.path(stage, file_name)))
+
+  message(sprintf("🏷️  Checkpoint saved: [%s] %s v%d → %s", args$stage, args$name, version, file.path(args$stage, file_name)))
   invisible(NULL)
 }
+
+
 
 
 #' Load a saved checkpoint object from a given stage and version
@@ -618,98 +619,68 @@ check_equal <- function(stage) {
   return(result)
 }
 
-#' Add a new tag to a project stage
+#' Register a tag and apply it to previous checkpoints
 #'
-#' Registers a comment tag for a project stage. A tag includes version, timestamp, and optional comment. Logged to `tags_log.xlsx`.
+#' Creates a tag with a comment and assigns it to all prior untagged checkpoints.
+#' If an `ID` is specified, the tag is applied only to that checkpoint.
 #'
-#' @param stage Character. Required. The project stage.
-#' @param comment Character. Optional. Description or comment for the tag.
+#' @param tag Character. Required. Tag label.
+#' @param ID Optional. Full ID of a specific checkpoint to tag.
+#' @param comment Optional. A comment associated with the tag.
 #'
-#' @return Invisibly returns a data.frame with the new tag.
+#' @return Invisibly returns the new tag entry as a data.frame.
 #' @export
-check_tag <- function(stage, comment = "") {
-  if (missing(stage) || !is.character(stage) || length(stage) != 1) {
-    stop("You must provide a single 'stage' string.")
+check_tag <- function(tag, comment = "") {
+  if (missing(tag) || is.null(tag)) {
+    stop("❌ You must provide a 'tag' value.")
   }
 
   folder <- "4_checkpoint"
-  if (!dir.exists(folder)) dir.create(folder)
+  if (!dir.exists(folder)) stop("❌ Folder '4_checkpoint' not found.")
+  log_path <- file.path(folder, "log.xlsx")
 
-  file_path <- file.path(folder, "tags_log.xlsx")
-
-  if (file.exists(file_path)) {
-    tags_log <- openxlsx::read.xlsx(file_path)
-  } else {
-    tags_log <- data.frame(
-      STAGE = character(),
-      VERSION = integer(),
-      DATE = character(),
-      COMMENT = character(),
-      DATE_UNIX = numeric(),
-      stringsAsFactors = FALSE
-    )
-  }
-
-  existing_versions <- tags_log$VERSION[tags_log$STAGE == stage]
-  next_version <- if (length(existing_versions) == 0) 1 else max(existing_versions, na.rm = TRUE) + 1
+  if (!file.exists(log_path)) stop("❌ Cannot tag: log.xlsx not found.")
+  log <- openxlsx::read.xlsx(log_path)
+  log <- upgrade_log_format(log)
 
   now <- Sys.time()
   now_unix <- as.numeric(now)
 
-  new_row <- data.frame(
-    STAGE = stage,
-    VERSION = next_version,
+  # Obtener último tag anterior
+  last_tag_time <- max(c(0, log$DATE_UNIX[log$IS_TAG]), na.rm = TRUE)
+
+  # Identificar checkpoints no taggeados previos
+  to_tag <- which(!log$IS_TAG & (is.na(log$TAG) | log$TAG == "") & log$DATE_UNIX > last_tag_time & log$DATE_UNIX <= now_unix)
+
+  # Aplicar tag
+  log$TAG[to_tag] <- tag
+
+  # Crear fila para marcar tag
+  tag_row <- data.frame(
+    STAGE = "(tag)", NAME = "", VERSION = NA,
     DATE = format(now, "%Y-%m-%d %H:%M:%S"),
     COMMENT = comment,
+    ID = generate_id(stage = "(tag)", name = "", tag = tag),
+    FILE = NA,
     DATE_UNIX = now_unix,
+    IS_TAG = TRUE,
+    TAG = tag,
     stringsAsFactors = FALSE
   )
 
-  tags_log <- rbind(tags_log, new_row)
-  tags_log <- tags_log[order(tags_log$DATE_UNIX, decreasing = TRUE), ]
-
-  # === FORMATO DE EXCEL ===
+  # Añadir tag al log y guardar
+  log <- rbind(log, tag_row)
   wb <- openxlsx::createWorkbook()
-  openxlsx::addWorksheet(wb, "Tags")
+  openxlsx::addWorksheet(wb, "log")
+  openxlsx::writeData(wb, "log", log)
+  openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
 
-  # Escribir datos
-  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1")  # Azul pastel
-  openxlsx::writeData(wb, sheet = 1, x = tags_log, headerStyle = header_style)
-  # Línea negra fina debajo de la fila de encabezado
-  header_border <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-  openxlsx::addStyle(wb, sheet = 1, style = header_border, rows = 1, cols = 1:4, gridExpand = TRUE, stack = TRUE)
-
-  # Estilo centrado
-  center_style <- openxlsx::createStyle(halign = "center")
-  openxlsx::addStyle(wb, 1, center_style, cols = 2, rows = 2:(nrow(tags_log) + 1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, 1, center_style, cols = 3, rows = 2:(nrow(tags_log) + 1), gridExpand = TRUE)
-
-  # Colores alternos por STAGE (blanco y gris claro)
-  unique_stages <- unique(tags_log$STAGE)
-  row_offset <- 1
-  for (i in seq_along(unique_stages)) {
-    rows <- which(tags_log$STAGE == unique_stages[i]) + 1  # +1 por encabezado
-    fill_color <- if ((i %% 2) == 1) "#FFFFFF" else "#F2F2F2"
-    style <- openxlsx::createStyle(fgFill = fill_color)
-    openxlsx::addStyle(wb, 1, style, cols = 1:4, rows = rows, gridExpand = TRUE)
-
-    # Línea negra fina abajo del grupo
-    last_row <- max(rows)
-    border_style <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-    openxlsx::addStyle(wb, 1, border_style, cols = 1:4, rows = last_row, gridExpand = TRUE, stack = TRUE)
-  }
-
-  # Ancho columnas 1 a 4 automático
-  openxlsx::setColWidths(wb, 1, cols = 1:4, widths = "auto")
-
-  openxlsx::setColWidths(wb, sheet = 1, cols = 5, widths = 0, hidden = TRUE)
-
-  # Guardar archivo
-  openxlsx::saveWorkbook(wb, file = file_path, overwrite = TRUE)
-
-  message("✅ Tag saved successfully.")
-  invisible(new_row)
+  message(sprintf("🏷️  Tag '%s' saved and applied to %d checkpoint(s).", tag, length(to_tag)))
+  invisible(tag_row)
 }
+
+
+
 
 #' Show registered checkpoint tags
 #'
@@ -844,6 +815,19 @@ parse_id <- function(ID) {
 }
 
 normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL, comment = NULL, obj = NULL, ID = NULL) {
+  # Caso especial: sólo se entrega tag, se permite para tags globales
+  if (is.null(stage) && is.null(ID) && !is.null(tag)) {
+    return(list(
+      stage = NULL,
+      name = NULL,
+      version = NULL,
+      tag = tag,
+      comment = comment,
+      obj = NULL,
+      ID = NULL
+    ))
+  }
+
   if (!is.null(ID)) {
     parsed <- parse_id(ID)
     tag <- parsed$tag
@@ -852,13 +836,23 @@ normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL
     version <- parsed$version
   }
 
-  if (is.null(stage)) stop("❌ 'stage' is required.")
+  if (is.null(stage) && is.null(ID)) {
+    stop("❌ Either 'stage', 'ID', or a global 'tag' must be provided.")
+  }
 
   if (missing(obj)) obj <- procdata
   if (is.null(obj)) obj <- procdata
 
   if (is.null(name)) {
     name <- if (!missing(obj)) deparse(substitute(obj)) else "procdata"
+  }
+
+  if (!is.null(ID) && is.null(obj)) {
+    if (!exists(name, envir = .GlobalEnv)) {
+      stop(sprintf("❌ Object '%s' specified in ID does not exist in the environment. Provide it with `obj = ...`.", name))
+    } else {
+      obj <- get(name, envir = .GlobalEnv)
+    }
   }
 
   if (is.null(ID)) {
@@ -875,6 +869,7 @@ normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL
     ID = ID
   ))
 }
+
 
 upgrade_log_format <- function(log_df) {
   if (!"ID" %in% names(log_df)) {
