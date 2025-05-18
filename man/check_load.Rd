@@ -2,7 +2,7 @@
 % Please edit documentation in R/checkpointR.R
 \name{check_load}
 \alias{check_load}
-\title{Load a checkpointed R object by stage, name, and version}
+\title{Load a saved checkpoint object from a given stage and version}
 \usage{
 check_load(
   stage,
@@ -14,26 +14,21 @@ check_load(
 )
 }
 \arguments{
-\item{stage}{Character. Stage name where the checkpoint was saved.}
+\item{stage}{Character. Stage from which to load the checkpoint.}
 
-\item{name}{Character. Name of the object to load. Default is `"procdata"`.}
+\item{name}{Character. Name of the object to load. Default is "procdata".}
 
-\item{version}{Numeric or NULL. Version number to load. If NULL, loads the latest version.}
+\item{version}{Integer. Specific version to load. If NULL, loads the most recent.}
 
-\item{folder}{Character. Base folder where checkpoints are stored. Default is `"4_checkpoint"`.}
+\item{folder}{Character. Folder where checkpoints are stored. Default is "4_checkpoint".}
 
-\item{envir}{Environment where to assign the loaded object. Default is `.GlobalEnv`.}
+\item{envir}{Environment. Where to assign the loaded object. Default is global environment.}
 
-\item{quiet}{Logical. If TRUE, suppresses informational output. Default is FALSE.}
+\item{quiet}{Logical. If TRUE, suppress console output. Default is FALSE.}
 }
 \value{
-Invisible NULL. Side effect: assigns the loaded object into the environment.
+Invisible NULL. Assigns the object in the specified environment.
 }
 \description{
-Loads a previously saved checkpoint object from the specified stage folder.
-}
-\examples{
-\dontrun{
-check_load(stage = "preprocessing", name = "mydata", version = 2)
-}
+Load a saved checkpoint object from a given stage and version
 }

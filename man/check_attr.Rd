@@ -2,25 +2,20 @@
 % Please edit documentation in R/checkpointR.R
 \name{check_attr}
 \alias{check_attr}
-\title{Print attributes and metadata of checkpointed objects}
+\title{Display attributes of checkpointed objects}
 \usage{
-check_attr(stage = NULL, obj = "procdata", version = NULL)
+check_attr(stage = NULL, name = "procdata", version = NULL)
 }
 \arguments{
-\item{stage}{Optional character. Stage name to filter or inspect. If NULL, prints all loaded objects with checkpoint info.}
+\item{stage}{Optional. Character. Stage name to filter or load from. If NULL, checks all loaded objects.}
 
-\item{obj}{Character. Name of the object to inspect. Default is `"procdata"`.}
+\item{name}{Optional. Character. Name of the object to inspect. Default is `"procdata"`.}
 
-\item{version}{Numeric or NULL. Version to inspect. If NULL, latest version is used.}
+\item{version}{Optional. Numeric. Version to inspect. If NULL, uses the most recent version.}
 }
 \value{
-Invisible NULL. Prints metadata to console.
+Invisibly returns NULL. Outputs formatted checkpoint metadata to the console.
 }
 \description{
-Displays checkpoint information and comments for loaded or saved objects.
-}
-\examples{
-\dontrun{
-check_attr(stage = "preprocessing", obj = "mydata", version = 2)
-}
+Shows checkpoint metadata for a specific object or for all loaded objects with checkpoint attributes.
 }

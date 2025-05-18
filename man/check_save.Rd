@@ -2,28 +2,22 @@
 % Please edit documentation in R/checkpointR.R
 \name{check_save}
 \alias{check_save}
-\title{Save a checkpoint of an R object with versioning and logging}
+\title{Save a checkpoint of an R object}
 \usage{
 check_save(stage, obj = procdata, name = NULL, comment = NULL)
 }
 \arguments{
 \item{stage}{Character. Required. Stage name to categorize the checkpoint.}
 
-\item{obj}{The R object to save. Default is `procdata`.}
+\item{obj}{The R object to save. Defaults to `procdata`.}
 
-\item{name}{Character. Name under which the object will be saved. Defaults to the name of the `obj`.}
+\item{name}{Character. Optional. Name of the object to save. Defaults to the name of `obj`.}
 
-\item{comment}{Optional character. Additional comment to record with the checkpoint.}
+\item{comment}{Character. Optional. Comment to record with the checkpoint.}
 }
 \value{
-Invisible NULL. Side effect: saves an .rds file and updates the log.
+Invisibly returns NULL. Side effect: saves a .rds file and updates the Excel log.
 }
 \description{
-Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
-}
-\examples{
-\dontrun{
-check_save(mydata, name = "mydata", stage = "preprocessing", comment = "After cleaning")
-}
-
+Saves an object to a versioned .rds file in a stage-specific folder and logs the event in a styled Excel file (`log.xlsx`).
 }

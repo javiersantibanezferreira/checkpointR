@@ -2,25 +2,18 @@
 % Please edit documentation in R/checkpointR.R
 \name{check_overview}
 \alias{check_overview}
-\title{Overview of available and loaded checkpoints}
+\title{Show an overview of available and loaded checkpoints}
 \usage{
 check_overview(stage = NULL, envir = .GlobalEnv)
 }
 \arguments{
-\item{stage}{Optional character vector. Filter checkpoints by stage(s). Default is NULL (all stages).}
+\item{stage}{Optional character vector. If provided, filters by stage(s).}
 
-\item{envir}{Environment to check loaded objects. Default is `.GlobalEnv`.}
+\item{envir}{Environment. The environment where loaded objects are searched. Default is global.}
 }
 \value{
-A list with two tibbles: `available_versions` and `loaded_bases`.
+A list with two tibbles: available_versions and loaded_bases.
 }
 \description{
-Provides a summary table of saved checkpoint versions and currently loaded checkpoint objects.
-}
-\examples{
-\dontrun{
-overview <- check_overview()
-print(overview$available_versions)
-print(overview$loaded_bases)
-}
+Show an overview of available and loaded checkpoints
 }

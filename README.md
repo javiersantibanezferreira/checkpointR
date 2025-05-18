@@ -1,198 +1,226 @@
 # checkpoint.R – versioned data manager for R projects
 
-*🇬🇧 English*  
-R system to manage checkpoints of databases during data analysis. It allows saving versions with metadata, loading specific checkpoints, viewing version summaries, and querying attributes. Facilitates organization and reproducibility in complex and collaborative projects.  
+*🇬🇧 English*\
+R system to manage checkpoints of data objects during analysis. It allows saving versioned files with metadata, loading specific checkpoints, viewing summaries, and querying comments and attributes. Facilitates organization and reproducibility in complex and collaborative projects.
 
-*🇪🇸 Español*  
-Sistema en R para gestionar checkpoints de bbdd durante análisis de datos. Permite guardar versiones con metadatos, cargar checkpoints específicos, visualizar resumen de versiones y consultar atributos. Facilita la organización y reproducibilidad en proyectos complejos y colaborativos.  
+*🇪🇸 Español*\
+Sistema en R para gestionar checkpoints de objetos de datos durante el análisis. Permite guardar archivos versionados con metadatos, cargar checkpoints específicos, visualizar resúmenes y consultar comentarios y atributos. Facilita la organización y reproducibilidad en proyectos complejos y colaborativos.
 
 **(Explicación en español debajo)**
 
----
+------------------------------------------------------------------------
+
 ## Índice / Table of Contents
 
-- [Features](#features) / [Funcionalidad](#funcionalidad)
-- [Installation](#installation-and-requirements) / [Instalación](#instalación-y-requisitos)
-- [Basic usage](#basic-usage) / [Uso básico](#uso-básico) 
-- [Parameters](#function-parameters) / [Parámetros](#parámetros-de-las-funciones) 
-- [Saves](#saves) / [Guardado](#guardado) 
-- [Author](#author) / [Autor](#autor)
+-   [Features](#features) / [Funcionalidad](#funcionalidad)
+-   [Installation](#installation-and-requirements) / [Instalación](#instalación-y-requisitos)
+-   [Basic usage](#basic-usage) / [Uso básico](#uso-básico)
+-   [Parameters](#function-parameters) / [Parámetros](#parámetros-de-las-funciones)
+-   [Saves](#saves) / [Guardado](#guardado)
+-   [Author](#author) / [Autor](#autor)
 
----
+------------------------------------------------------------------------
 
-## Features
+## Features {#features}
 
-- **Save checkpoint (`check_save`)**  
-  Saves an object to disk with automatic versioning and metadata (stage, name, comment).
+-   **Save checkpoint (`check_save`)**\
+    Saves an object to disk with automatic versioning, metadata (stage, name, comment), and logs it in a styled Excel sheet.
 
-- **Load checkpoint (`check_load`)**  
-  Loads a specific checkpoint into the global environment by stage, name, and version.
+-   **Load checkpoint (`check_load`)**\
+    Loads a specific checkpoint into the environment by stage, name, and version.
 
-- **Checkpoint summary (`check_overview`)**  
-  Displays a summary of all saved versions and objects loaded in memory.
+-   **Checkpoint summary (`check_overview`)**\
+    Displays a summary of all saved versions and loaded objects. Also allows detailed inspection by stage.
 
-- **Query attributes (`check_attr`)**  
-  Shows detailed information (stage, version, date, comment) of loaded or saved objects.
+-   **Query attributes (`check_attr`)**\
+    Shows checkpoint metadata and comments for objects in memory or saved in disk.
 
-- **Compare identical versions (check_equal) - experimental**  
-  Identifies objects with identical content within a given stage.  
+-   **Tag stages (`check_tag`, `check_tags`)**\
+    Create and retrieve tags associated with a project stage, independent of specific objects.
 
----
+-   **Compare identical versions (`check_equal`)** – experimental\
+    Detects whether saved objects in a stage are identical in content.
 
-## Installation and requirements
+------------------------------------------------------------------------
 
-- Requires R with packages: `openxlsx`, `dplyr`, `tibble` (installed automatically if missing).  
-- Simply copy and paste the functions into your session or include them in your script.
-  It is recommended to install the package directly from GitHub using:
-  
-  ```r
-  remotes::install_github("javiersantibanezferreira/checkpointR")
-  ```
+## Installation and requirements {#installation-and-requirements}
 
+-   Requires R with packages: `openxlsx`, `dplyr`, `tibble`\
+-   Functions can be sourced manually, or install the package directly from GitHub:
 
----
+``` r
+remotes::install_github("javiersantibanezferreira/checkpointR")
+```
 
-## Basic usage
+------------------------------------------------------------------------
 
-```r
+## Basic usage {#basic-usage}
+
+``` r
 # Save a checkpoint
-check_save(procdata, nombre = "procdata", etapa = "stage1", comentario = "Clean data")
+check_save(procdata, name = "procdata", stage = "stage1", comment = "Clean data")
 
-# Load the latest checkpoint from a stage
-check_load("stage1", nombre = "procdata")
+# Load latest version
+check_load("stage1", name = "procdata")
 
-# View checkpoint summary
+# Overview of available and loaded checkpoints
 check_overview()
 
-# Query object attributes
+# See attributes and comments
 check_attr()
 
-# Check for duplicate versions
-check_equal("stage")
-*Experimental function*
+# Add a tag to a stage (not tied to a specific object)
+check_tag("stage1", comment = "Preliminary stage closed")
 
+# Review all tags
+check_tags()
+
+# Find identical objects
+check_equal("stage1")  # Experimental
 ```
-## Function parameters
 
-| Function         | Parameter    | Description                          | Required / Default        |
-| ---------------- | ------------ | ------------------------------------ | ------------------------- |
-| `check_save`     | `obj`        | Object to save                       | `procdata` by default     |
-|                  | `name`       | Name to save the object as           | Name of `obj` by default  |
-|                  | `stage`      | Name of the analysis stage           | Required                  |
-|                  | `comment`    | Optional comment for the checkpoint  | Optional                  |
-| `check_load`     | `stage`      | Stage to load checkpoint from        | Required                  |
-|                  | `name`       | Name of the object to load           | `"procdata"` by default   |
-|                  | `version`    | Specific version to load             | Latest version by default |
-|                  | `envir`      | Environment to load objects into     | `.GlobalEnv` by default   |
-| `check_overview` | `stage`      | Filter summary by stage              | Optional                  |
-|                  | `envir`      | Environment to search loaded objects | `.GlobalEnv` by default   |
-| `check_attr`     | `stage`      | Stage to query attributes            | Optional                  |
-|                  | `obj`        | Name of the object to query          | `"procdata"` by default   |
-|                  | `version`    | Version to query                     | Latest version by default |
-| `check_equal`*   | `stage`      | Check for duplicate versions         | Required                  |
+------------------------------------------------------------------------
 
-**(experimental)*
+## Function parameters {#function-parameters}
 
----
+| Function         | Parameter | Description                      | Required / Default      |
+|---------------|---------------|-------------------------|-----------------|
+| `check_save`     | `obj`     | R object to save                 | `procdata` by default   |
+|                  | `name`    | Name to save                     | From `obj` by default   |
+|                  | `stage`   | Project stage name               | Required                |
+|                  | `comment` | Optional description             | Optional                |
+| `check_load`     | `stage`   | Stage to load from               | Required                |
+|                  | `name`    | Object name                      | `"procdata"` by default |
+|                  | `version` | Version to load                  | Latest by default       |
+|                  | `envir`   | Target environment               | `.GlobalEnv`            |
+| `check_overview` | `stage`   | Filter by stage                  | Optional                |
+|                  | `envir`   | Environment to search            | `.GlobalEnv`            |
+| `check_attr`     | `stage`   | Stage to inspect                 | Optional                |
+|                  | `name`    | Object name to inspect           | `"procdata"` by default |
+|                  | `version` | Version to inspect               | Latest by default       |
+| `check_tag`      | `stage`   | Stage to tag                     | Required                |
+|                  | `comment` | Optional tag comment             | Optional                |
+| `check_tags`     | `stage`   | Stage to view tags or `"stages"` | Optional                |
+|                  | `version` | Specific version to inspect      | Optional                |
+| `check_equal`\*  | `stage`   | Compare for duplicates           | Required                |
 
-## Saves
+------------------------------------------------------------------------
 
-4_checkpoint/  
-Root folder where subfolders per stage are created to store `.rds` files and the `registro.xlsx` log.
+## Saves {#saves}
 
----
+`4_checkpoint/`\
+Root directory where a folder is created per stage. Each stage contains `.rds` files, and the main logs:
 
-## Author
+-   `log.xlsx` → log of saved objects\
+-   `tags_log.xlsx` → log of stage tags
+
+------------------------------------------------------------------------
+
+## Author {#author}
 
 Javier S.F.
 
----
----
+------------------------------------------------------------------------
 
-# checkpoint.R – Gestor de versiones de datos para R  
+------------------------------------------------------------------------
 
-## Funcionalidad
+# checkpoint.R – Gestor de versiones de datos para R
 
-- **Guardar checkpoint (`check_save`)**  
-  Guarda un objeto en disco con versión automática y metadatos (etapa, nombre, comentario).
+## Funcionalidad {#funcionalidad}
 
-- **Cargar checkpoint (`check_load`)**  
-  Carga un checkpoint específico al entorno global por etapa, nombre y versión.
+-   **Guardar checkpoint (`check_save`)**\
+    Guarda un objeto en disco con versión automática, metadatos (etapa, nombre, comentario) y un registro visual en Excel.
 
-- **Resumen de checkpoints (`check_overview`)**  
-  Muestra un resumen de todas las versiones guardadas y los objetos cargados en memoria.
+-   **Cargar checkpoint (`check_load`)**\
+    Carga un checkpoint específico al entorno global según etapa, nombre y versión.
 
-- **Consultar atributos (`check_attr`)**  
-  Muestra información detallada (etapa, versión, fecha, comentario) de los objetos cargados o guardados.
+-   **Resumen de checkpoints (`check_overview`)**\
+    Muestra un resumen de versiones disponibles y objetos cargados. También permite ver detalle por etapa.
 
-- **Comparar versiones (`check_equal`) - experimental**  
-  Identifica si existen objetos con contenido idéntico dentro de una misma etapa.  
+-   **Consultar atributos (`check_attr`)**\
+    Muestra información y comentarios de los objetos cargados o guardados.
 
----
+-   **Etiquetar etapas (`check_tag`, `check_tags`)**\
+    Permite registrar y visualizar etiquetas por etapa, sin estar asociadas a objetos específicos.
 
-## Instalación y requisitos
+-   **Comparar versiones (`check_equal`) – experimental**\
+    Detecta si existen objetos con contenido idéntico dentro de una misma etapa.
 
-- Requiere R con los paquetes: `openxlsx`, `dplyr`, `tibble` (se instala automáticamente si falta).
-- Solo copia y pega las funciones en tu sesión o inclúyelas en tu script.
-  Se recomienda instalar el paquete directamente desde GitHub usando:
-  
-  ```r
-  remotes::install_github("javiersantibanezferreira/checkpointR")
-  ```
+------------------------------------------------------------------------
 
----
+## Instalación y requisitos {#instalación-y-requisitos}
 
-## Uso básico
+-   Requiere R con los paquetes: `openxlsx`, `dplyr`, `tibble`\
+-   Puedes incluir las funciones directamente en tu script o instalar el paquete desde GitHub:
 
-```r
+``` r
+remotes::install_github("javiersantibanezferreira/checkpointR")
+```
+
+------------------------------------------------------------------------
+
+## Uso básico {#uso-básico}
+
+``` r
 # Guardar un checkpoint
-check_save(procdata, nombre = "procdata", etapa = "etapa1", comentario = "Datos limpios")
+check_save(procdata, name = "procdata", stage = "etapa1", comment = "Datos limpios")
 
-# Cargar el último checkpoint guardado de una etapa
-check_load("etapa1", nombre = "procdata")
+# Cargar última versión
+check_load("etapa1", name = "procdata")
 
 # Ver resumen de checkpoints
 check_overview()
 
-# Consultar atributos del objeto cargado
+# Consultar atributos y comentarios
 check_attr()
 
-# Ver si hay versiones idénticas dentro de una etapa
-check_equal("etapa")
-*Fase experimental*
+# Agregar una etiqueta a una etapa
+check_tag("etapa1", comment = "Cierre preliminar")
 
+# Revisar todas las etiquetas
+check_tags()
+
+# Verificar duplicados (experimental)
+check_equal("etapa1")
 ```
----
 
-## Parámetros de las funciones
+------------------------------------------------------------------------
 
-| Función          | Parámetro    | Descripción                            | Obligatorio / Por defecto  |
-| ---------------- | ------------ | -------------------------------------- | -------------------------- |
-| `check_save`     | `obj`        | Objeto a guardar                       | `procdata` por defecto     |
-|                  | `nombre`     | Nombre con que se guardará el objeto   | Igual a `obj` por defecto  |
-|                  | `etapa`      | Nombre de la etapa o fase del análisis | Obligatorio                |
-|                  | `comentario` | Comentario opcional para el checkpoint | Opcional                   |
-| `check_load`     | `etapa`      | Etapa para cargar el checkpoint        | Obligatorio                |
-|                  | `nombre`     | Nombre del objeto a cargar             | `"procdata"` por defecto   |
-|                  | `version`    | Versión específica a cargar            | Última versión por defecto |
-|                  | `envir`      | Entorno donde cargar los objetos       | `.GlobalEnv` por defecto   |
-| `check_overview` | `etapa`      | Filtra resumen por etapa               | Opcional                   |
-|                  | `envir`      | Entorno donde buscar objetos cargados  | `.GlobalEnv` por defecto   |
-| `check_attr`     | `etapa`      | Etapa para consultar atributos         | Opcional                   |
-|                  | `obj`        | Nombre del objeto a consultar          | `"procdata"` por defecto   |
-|                  | `version`    | Versión a consultar                    | Última versión por defecto |
-| `check_equal`*   | `etapa`      | Identifica bases duplicadas            | Obligatorio                |
+## Parámetros de las funciones {#parámetros-de-las-funciones}
 
-**(en desarrollo)*
+| Función          | Parámetro | Descripción                            | Obligatorio / Por defecto  |
+|---------------|---------------|--------------------------|-----------------|
+| `check_save`     | `obj`     | Objeto a guardar                       | `procdata` por defecto     |
+|                  | `name`    | Nombre con que se guardará             | Desde `obj` por defecto    |
+|                  | `stage`   | Nombre de la etapa o fase del análisis | Obligatorio                |
+|                  | `comment` | Comentario opcional                    | Opcional                   |
+| `check_load`     | `stage`   | Etapa desde donde cargar               | Obligatorio                |
+|                  | `name`    | Nombre del objeto a cargar             | `"procdata"` por defecto   |
+|                  | `version` | Versión a cargar                       | Última versión por defecto |
+|                  | `envir`   | Entorno donde cargar el objeto         | `.GlobalEnv`               |
+| `check_overview` | `stage`   | Etapa a filtrar                        | Opcional                   |
+|                  | `envir`   | Entorno donde buscar objetos cargados  | `.GlobalEnv`               |
+| `check_attr`     | `stage`   | Etapa para consultar                   | Opcional                   |
+|                  | `name`    | Nombre del objeto a consultar          | `"procdata"` por defecto   |
+|                  | `version` | Versión a consultar                    | Última versión por defecto |
+| `check_tag`      | `stage`   | Etapa para etiquetar                   | Obligatorio                |
+|                  | `comment` | Comentario de la etiqueta              | Opcional                   |
+| `check_tags`     | `stage`   | Etapa a visualizar o `"stages"`        | Opcional                   |
+|                  | `version` | Versión específica                     | Opcional                   |
+| `check_equal`\*  | `stage`   | Compara versiones duplicadas           | Obligatorio                |
 
----
+------------------------------------------------------------------------
 
-## Guardado
+## Guardado {#guardado}
 
-4_checkpoint/  
-Carpeta base donde se crean subcarpetas por etapa para almacenar los archivos .rds y el registro registro.xlsx.
+`4_checkpoint/`\
+Directorio base donde se crean subcarpetas por etapa. Cada etapa guarda archivos `.rds`, además de los siguientes registros:
 
----
+-   `log.xlsx` → registro de objetos guardados\
+-   `tags_log.xlsx` → registro de etiquetas por etapa
 
-## Autor
+------------------------------------------------------------------------
+
+## Autor {#autor}
+
 Javier S.F.

@@ -1,6 +1,11 @@
-#' @import dplyr
-#' @import openxlsx
-#' @import tibble
+#' checkpointR: Versioned Checkpoints for R Projects
+#'
+#' Tools for saving, tagging, loading and managing data object checkpoints across stages.
+#'
+#' @keywords internal
+#' @import openxlsx dplyr tibble
+#' @name checkpointR
+"_PACKAGE"
 NULL
 
 #' Save a checkpoint of an R object
