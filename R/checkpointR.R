@@ -10,18 +10,24 @@ NULL
 
 #' Save a checkpoint of an R object
 #'
-#' Saves an object to a versioned .rds file in a stage-specific folder and logs the event in a styled Excel file (`log.xlsx`).
+#' Saves an object to a versioned .rds file and logs the save with metadata in Excel.
 #'
-#' @param stage Character. Required. Stage name to categorize the checkpoint.
-#' @param obj The R object to save. Defaults to `procdata`.
-#' @param name Character. Optional. Name of the object to save. Defaults to the name of `obj`.
-#' @param comment Character. Optional. Comment to record with the checkpoint.
+#' @param stage Character. Stage name.
+#' @param obj R object to save. Defaults to `procdata`.
+#' @param name Optional. Name of the object. Inferred if NULL.
+#' @param comment Optional. Text comment for the log.
+#' @param ID Optional. Unique identifier containing stage, name, version, and optionally tag.
 #'
-#' @return Invisibly returns NULL. Side effect: saves a .rds file and updates the Excel log.
+#' @return Invisible NULL. Saves .rds and updates log.xlsx.
 #' @export
-check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
-  if (missing(stage) || stage == "") stop("❌ You must specify a valid 'stage' as a non-empty string.")
-  if (is.null(name)) name <- deparse(substitute(obj))
+check_save <- function(stage = NULL, obj = procdata, name = NULL, comment = NULL, ID = NULL) {
+  args <- normalize_args(stage = stage, name = name, comment = comment, obj = obj, ID = ID)
+
+  stage <- args$stage
+  name <- args$name
+  comment <- args$comment
+  obj <- args$obj
+  ID <- args$ID
 
   base_folder <- "4_checkpoint"
   if (!dir.exists(base_folder)) dir.create(base_folder)
@@ -33,6 +39,7 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
 
   if (file.exists(log_path)) {
     log <- openxlsx::read.xlsx(log_path)
+    log <- upgrade_log_format(log)
   } else {
     log <- data.frame(
       STAGE = character(),
@@ -40,94 +47,89 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
       VERSION = numeric(),
       DATE = character(),
       COMMENT = character(),
+      ID = character(),
       FILE = character(),
       DATE_UNIX = numeric(),
+      IS_TAG = logical(),
       stringsAsFactors = FALSE
     )
   }
 
-  subset_versions <- log[log$STAGE == stage & log$NAME == name, ]
-  version <- if (nrow(subset_versions) == 0) 1 else max(subset_versions$VERSION) + 1
-
+  version_subset <- log[log$STAGE == stage & log$NAME == name, ]
+  version <- if (nrow(version_subset) == 0) 1 else max(version_subset$VERSION, na.rm = TRUE) + 1
   file_name <- sprintf("%s_%s_v%d.rds", stage, name, version)
-  save_path <- file.path(stage_folder, file_name)
-  saveRDS(obj, save_path)
+  file_path <- file.path(stage_folder, file_name)
+  saveRDS(obj, file_path)
 
   attr(obj, "checkpoint_info") <- list(name = name, stage = stage, version = version)
   attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
 
   now <- Sys.time()
-  new_log <- data.frame(
+  ID <- generate_id(stage = stage, name = name, version = version)
+  new_row <- data.frame(
     STAGE = stage,
     NAME = name,
     VERSION = version,
     DATE = format(now, "%Y-%m-%d %H:%M:%S"),
     COMMENT = ifelse(is.null(comment), "", comment),
+    ID = ID,
     FILE = file.path(stage, file_name),
     DATE_UNIX = as.numeric(now),
+    IS_TAG = FALSE,
     stringsAsFactors = FALSE
   )
 
-  log <- rbind(log, new_log)
+  log <- rbind(log, new_row)
+  log <- log[, c("STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")]
 
-  # Ordering logic
-  log <- log |>
-    dplyr::group_by(STAGE) |>
-    dplyr::mutate(STAGE_LATEST = max(DATE_UNIX)) |>
-    dplyr::ungroup() |>
-    dplyr::group_by(STAGE, NAME) |>
-    dplyr::mutate(NAME_LATEST = max(DATE_UNIX)) |>
-    dplyr::ungroup() |>
-    dplyr::mutate(NAME_PRIORITY = ifelse(NAME == "procdata", 0, 1)) |>
-    dplyr::arrange(
-      dplyr::desc(STAGE_LATEST),
-      NAME_PRIORITY,
-      dplyr::desc(NAME_LATEST),
-      dplyr::desc(DATE_UNIX)
-    ) |>
-    dplyr::select(-STAGE_LATEST, -NAME_LATEST, -NAME_PRIORITY)
-
-  # Excel output
+  # === Excel styling ===
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
 
-  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1")
-  openxlsx::writeData(wb, "log", log, headerStyle = header_style)
-
+  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1", halign = "center")
+  border_style <- openxlsx::createStyle(border = "bottom", borderColour = "black")
   center_style <- openxlsx::createStyle(halign = "center")
   nowrap_style <- openxlsx::createStyle(wrapText = FALSE)
-  border_header <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-  border_stage <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-
-  openxlsx::addStyle(wb, "log", center_style, cols = 3, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", center_style, cols = 4, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", nowrap_style, cols = 6, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", border_header, rows = 1, cols = 1:6, gridExpand = TRUE)
-
-  stage_vector <- log$STAGE
-  unique_stages <- unique(stage_vector)
   gray <- "#F2F2F2"
   white <- "#FFFFFF"
 
+  openxlsx::writeData(wb, "log", log, headerStyle = header_style)
+  openxlsx::addStyle(wb, "log", header_style, rows = 1, cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
+  openxlsx::addStyle(wb, "log", border_style, rows = 1, cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
+
+  # Aplicar color y bordes por grupo STAGE
+  stage_vector <- log$STAGE
+  unique_stages <- unique(stage_vector)
+  row_colors <- c(white, gray)
+
   for (i in seq_along(unique_stages)) {
     rows <- which(stage_vector == unique_stages[i]) + 1
-    fill_color <- if ((i %% 2) == 1) white else gray
+    fill_color <- row_colors[(i %% 2) + 1]
     fill_style <- openxlsx::createStyle(fgFill = fill_color)
-    openxlsx::addStyle(wb, "log", style = fill_style, cols = 1:6, rows = rows, gridExpand = TRUE)
 
-    last_row <- max(rows)
-    openxlsx::addStyle(wb, "log", style = border_stage, rows = last_row, cols = 1:6, gridExpand = TRUE, stack = TRUE)
+    openxlsx::addStyle(wb, "log", style = fill_style, rows = rows, cols = 1:ncol(log), gridExpand = TRUE)
+    openxlsx::addStyle(wb, "log", style = border_style, rows = max(rows), cols = 1:ncol(log), gridExpand = TRUE, stack = TRUE)
   }
 
-  openxlsx::setColWidths(wb, "log", cols = 1:5, widths = "auto")
-  openxlsx::setColWidths(wb, "log", cols = 3, widths = 10)
-  openxlsx::setColWidths(wb, "log", cols = 6, widths = 25)
-  openxlsx::setColWidths(wb, "log", cols = 7, widths = 0, hidden = TRUE)
+  # Estilo centrado para VERSION y DATE (col 3 y 4)
+  openxlsx::addStyle(wb, "log", style = center_style, rows = 2:(nrow(log) + 1), cols = 3, gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", style = center_style, rows = 2:(nrow(log) + 1), cols = 4, gridExpand = TRUE)
+
+  # nowrap para FILE (col 7)
+  openxlsx::addStyle(wb, "log", style = nowrap_style, rows = 2:(nrow(log) + 1), cols = 7, gridExpand = TRUE)
+
+  # Ancho automático en STAGE, NAME, VERSION, DATE, COMMENT, ID
+  openxlsx::setColWidths(wb, "log", cols = 1:6, widths = "auto")
+  openxlsx::setColWidths(wb, "log", cols = 7, widths = max(nchar("FILE")) + 2)
+
+  # Ocultar DATE_UNIX (col 8) e IS_TAG (col 9)
+  openxlsx::setColWidths(wb, "log", cols = 8:9, widths = 0, hidden = TRUE)
 
   openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
   message(sprintf("🏷️  Checkpoint saved: [%s] %s v%d → %s", stage, name, version, file.path(stage, file_name)))
   invisible(NULL)
 }
+
 
 #' Load a saved checkpoint object from a given stage and version
 #'
@@ -815,4 +817,71 @@ check_tags <- function(stage = NULL, version = NULL) {
   comment_text <- ifelse(is.na(last_tag$COMMENT) || last_tag$COMMENT == "", "(no comment)", last_tag$COMMENT)
   cat(comment_text, "\n")
   return(invisible(NULL))
+}
+
+generate_id <- function(stage, name, version = NULL, tag = NULL) {
+  id <- paste0(
+    if (!is.null(tag)) paste0("tag:", tag, "_") else "",
+    "stage:", stage, "_",
+    "name:", name,
+    if (!is.null(version)) paste0("_v", version) else ""
+  )
+  return(id)
+}
+
+parse_id <- function(ID) {
+  # Extraer partes con expresiones regulares
+  tag <- if (grepl("^tag:", ID)) sub("^tag:([^_]+)_.*", "\\1", ID) else NULL
+  stage <- sub(".*stage:([^_]+)_.*", "\\1", ID)
+  name <- sub(".*name:([^_]+)(_v[0-9]+)?$", "\\1", ID)
+  version <- if (grepl("_v[0-9]+$", ID)) {
+    as.numeric(sub(".*_v([0-9]+)$", "\\1", ID))
+  } else {
+    NULL
+  }
+
+  return(list(tag = tag, stage = stage, name = name, version = version))
+}
+
+normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL, comment = NULL, obj = NULL, ID = NULL) {
+  if (!is.null(ID)) {
+    parsed <- parse_id(ID)
+    tag <- parsed$tag
+    stage <- parsed$stage
+    name <- parsed$name
+    version <- parsed$version
+  }
+
+  if (is.null(stage)) stop("❌ 'stage' is required.")
+
+  if (missing(obj)) obj <- procdata
+  if (is.null(obj)) obj <- procdata
+
+  if (is.null(name)) {
+    name <- if (!missing(obj)) deparse(substitute(obj)) else "procdata"
+  }
+
+  if (is.null(ID)) {
+    ID <- generate_id(stage, name, version, tag)
+  }
+
+  return(list(
+    stage = stage,
+    name = name,
+    version = version,
+    tag = tag,
+    comment = comment,
+    obj = obj,
+    ID = ID
+  ))
+}
+
+upgrade_log_format <- function(log_df) {
+  if (!"ID" %in% names(log_df)) {
+    log_df$ID <- mapply(generate_id, log_df$stage, log_df$name, log_df$version, MoreArgs = list(tag = NULL))
+  }
+  if (!"IS_TAG" %in% names(log_df)) {
+    log_df$IS_TAG <- FALSE
+  }
+  return(log_df)
 }
