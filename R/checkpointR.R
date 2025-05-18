@@ -728,4 +728,3 @@ check_tags <- function(stage = NULL, version = NULL) {
   return(invisible(NULL))
 }
 
-
