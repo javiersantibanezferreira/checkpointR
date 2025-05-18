@@ -446,6 +446,70 @@ check_equal <- function(stage) {
   return(result)
 }
 
+#' Add a new checkpoint tag with comment
+#'
+#' \code{check_tag} adds a new comment tag for a given project stage.
+#' The tag includes an automatically assigned version, timestamp, and optional description.
+#'
+#' If the file \code{4_checkpoint/tags_log.xlsx} does not exist, it is created automatically.
+#'
+#' @param stage Character. The project stage (required).
+#' @param comment Character. Optional comment describing the stage or changes.
+#'
+#' @return Invisibly returns the new tag as a data.frame.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' check_tag("data_cleaning", "Removed NA values and filtered rows")
+#' }
+check_tag <- function(stage, comment = "") {
+  if (missing(stage) || !is.character(stage) || length(stage) != 1) {
+    stop("You must provide a single 'stage' string.")
+  }
+
+  folder <- "4_checkpoint"
+  if (!dir.exists(folder)) dir.create(folder)
+
+  file_path <- file.path(folder, "tags_log.xlsx")
+
+  if (!requireNamespace("openxlsx", quietly = TRUE)) {
+    stop("Package 'openxlsx' required but not installed.")
+  }
+
+  if (file.exists(file_path)) {
+    tags_log <- openxlsx::read.xlsx(file_path)
+  } else {
+    tags_log <- data.frame(
+      stage = character(),
+      version = integer(),
+      date = as.numeric(),
+      comment = character(),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  existing_versions <- tags_log$version[tags_log$stage == stage]
+  next_version <- if (length(existing_versions) == 0) 1 else max(existing_versions) + 1
+
+  now <- as.numeric(Sys.time())  # store as numeric to be Excel-friendly
+
+  new_tag <- data.frame(
+    stage = stage,
+    version = next_version,
+    date = now,
+    comment = comment,
+    stringsAsFactors = FALSE
+  )
+
+  tags_log <- rbind(tags_log, new_tag)
+  tags_log <- tags_log[order(tags_log$date, decreasing = TRUE), ]
+
+  openxlsx::write.xlsx(tags_log, file = file_path, overwrite = TRUE)
+
+  invisible(new_tag)
+}
+
 #' Manage and Display Checkpoint Tags
 #'
 #' \code{check_tags} retrieves and displays information from checkpoint tags stored in an Excel log.
@@ -453,6 +517,7 @@ check_equal <- function(stage) {
 #' If no \code{tags_log.xlsx} exists, it will create an empty log file.
 #'
 #' @param stage Optional. A character string specifying the project stage to filter tags.
+#' Use \code{"stages"} to list all stages with their latest tag.
 #' @param version Optional. An integer specifying a version number for a given stage.
 #'
 #' @return Invisibly returns NULL. Outputs tag information to the console.
@@ -460,77 +525,98 @@ check_equal <- function(stage) {
 #' @details
 #' - If called with no arguments, shows the most recent tag overall.
 #' - If called with \code{stage} only, shows all tags for that stage ordered newest to oldest.
-#' - If called with \code{stage} and \code{version}, shows the info for that specific tag.
+#' - If called with \code{stage = "stages"}, shows all stages with their latest tag summary.
+#' - If called with \code{stage} and \code{version}, shows the specific tag for that stage.
 #'
 #' The tags log file is saved as \code{"4_checkpoint/tags_log.xlsx"}.
 #'
 #' @examples
 #' \dontrun{
-#' check_tags()                        # Show last tag overall
-#' check_tags(stage = "data_clean")   # Show all tags for 'data_clean' stage
-#' check_tags(stage = "data_clean", version = 2) # Show tag version 2 for 'data_clean'
+#' check_tags()                               # Show last tag overall
+#' check_tags(stage = "data_clean")          # Show all tags for 'data_clean' stage
+#' check_tags(stage = "data_clean", version = 2)  # Show tag version 2
+#' check_tags(stage = "stages")              # Show summary of all stages
 #' }
-#'
 #' @export
 check_tags <- function(stage = NULL, version = NULL) {
   log_path <- file.path("4_checkpoint", "tags_log.xlsx")
   if (!dir.exists("4_checkpoint")) dir.create("4_checkpoint")
 
-  # Create empty tags log if missing
   if (!file.exists(log_path)) {
     empty_df <- data.frame(
       stage = character(),
       version = integer(),
       comment = character(),
-      date = character(),
+      date = numeric(),
       stringsAsFactors = FALSE
     )
     openxlsx::write.xlsx(empty_df, log_path)
   }
 
   tags <- openxlsx::read.xlsx(log_path)
-
-  # Check empty tags log
   if (nrow(tags) == 0) {
     message("No tags found in tags_log.xlsx.")
     return(invisible(NULL))
   }
 
-  # Convert date column to POSIXct for ordering
-  tags$date <- as.POSIXct(tags$date, format = "%Y-%m-%d %H:%M:%S")
+  # Convert date column robustly
+  tags$date <- lapply(tags$date, function(x) {
+    if (is.na(x)) return(NA)
+    if (x > 1000000000) {
+      as.POSIXct(x, origin = "1970-01-01", tz = "UTC")
+    } else {
+      as.POSIXct((x - 25569) * 86400, origin = "1970-01-01", tz = "UTC")
+    }
+  }) |> unlist() |> as.POSIXct(origin = "1970-01-01", tz = "UTC")
 
-  # Case: specific stage + version
+  tags <- tags[!is.na(tags$date), ]
+
+  # === 1. SUMMARY OF STAGES ===
+  if (!is.null(stage) && stage == "stages") {
+    summary_df <- tags |>
+      dplyr::group_by(stage) |>
+      dplyr::slice_max(order_by = date, n = 1) |>
+      dplyr::ungroup() |>
+      dplyr::arrange(dplyr::desc(date)) |>
+      dplyr::mutate(date_short = format(date, "%d %b %Y")) |>
+      dplyr::select(stage, version, date_short)
+
+    cat("\n✅ TAG STAGES SUMMARY ✅\n\n")
+    cat(sprintf("%-15s | %-7s | %-12s\n", "Stage", "Version", "Last Comment Date"))
+    cat("-------------------------------------------\n")
+    for (i in seq_len(nrow(summary_df))) {
+      cat(sprintf("%-15s | v%-6d | %-12s\n",
+                  summary_df$stage[i], summary_df$version[i], summary_df$date_short[i]))
+    }
+    return(invisible(NULL))
+  }
+
+  # === 2. SPECIFIC TAG ===
   if (!is.null(stage) && !is.null(version)) {
     tag_row <- tags[tags$stage == stage & tags$version == version, ]
     if (nrow(tag_row) == 0) {
       message(sprintf("No tag found for stage '%s' with version %d.", stage, version))
       return(invisible(NULL))
     }
-    # Print header
-    cat(sprintf("\nTag details for stage '%s' version v%d:\n\n", stage, version))
-    # Table with version and date with time
+    cat(sprintf("\n✅ TAG FOR STAGE: %s | VERSION v%d ✅\n\n", toupper(stage), version))
     cat("Version | Date and Time\n")
     cat("------------------------\n")
     cat(sprintf("v%d      | %s\n\n", tag_row$version, format(tag_row$date, "%Y-%m-%d %H:%M:%S")))
-    # Comment
     cat("Comment:\n")
     cat(sprintf("%s\n", tag_row$comment))
     return(invisible(NULL))
   }
 
-  # Case: stage specified only
-  if (!is.null(stage) && is.null(version)) {
+  # === 3. ALL TAGS FOR A STAGE ===
+  if (!is.null(stage)) {
     stage_tags <- tags[tags$stage == stage, ]
     if (nrow(stage_tags) == 0) {
       message(sprintf("No tags found for stage '%s'.", stage))
       return(invisible(NULL))
     }
+
     stage_tags <- stage_tags[order(stage_tags$date, decreasing = TRUE), ]
-
-    # Print header with stage name
-    cat(sprintf("\nAll tags for stage '%s' (newest to oldest):\n\n", stage))
-
-    # Table: Version and Date (with time)
+    cat(sprintf("\n✅ TAGS FOR STAGE: %s ✅\n\n", toupper(stage)))
     cat("Version | Date and Time\n")
     cat("------------------------\n")
     for (i in seq_len(nrow(stage_tags))) {
@@ -543,81 +629,19 @@ check_tags <- function(stage = NULL, version = NULL) {
     return(invisible(NULL))
   }
 
-  # Case: no parameters -> show last tag overall
-  if (is.null(stage) && is.null(version)) {
-    last_tag <- tags[which.max(tags$date), ]
-    # Print one line table header
-    cat(sprintf("\nStage     | Version | Date\n"))
-    cat(sprintf("-----------------------------\n"))
-    cat(sprintf("%-9s | v%-6d | %s\n\n", last_tag$stage, last_tag$version, format(last_tag$date, "%Y-%m-%d")))
-    # Empty line
-    cat("\n")
-    # Comment
-    cat(last_tag$comment, "\n")
-    return(invisible(NULL))
-  }
-
-  # Other cases not supported
-  stop("Invalid combination of parameters.")
-}
-
-#' Add a new checkpoint tag with comment
-#'
-#' @param stage Character. The project stage (required).
-#' @param comment Character. Optional comment describing the stage or changes.
-#' @return Invisibly returns the new tag info as a data.frame.
-#' @export
-check_tag <- function(stage, comment = "") {
-  if (missing(stage) || !is.character(stage) || length(stage) != 1) {
-    stop("You must provide a single 'stage' string.")
-  }
-
-  folder <- "4_checkpoint"
-  if (!dir.exists(folder)) dir.create(folder)
-
-  file_path <- file.path(folder, "tags_log.xlsx")
-
-  # Load openxlsx package (assumes user installed it already)
-  if (!requireNamespace("openxlsx", quietly = TRUE)) {
-    stop("Package 'openxlsx' required but not installed.")
-  }
-
-  # Load existing tags if file exists
-  if (file.exists(file_path)) {
-    tags_log <- openxlsx::read.xlsx(file_path)
+  # === 4. LAST TAG OVERALL ===
+  last_tag <- tags[which.max(tags$date), ]
+  cat("\n✅ LAST TAG ✅\n\n")
+  cat(sprintf("Stage     | Version | Date\n"))
+  cat(sprintf("-----------------------------\n"))
+  date_str <- if (!inherits(last_tag$date, "POSIXt") || is.na(last_tag$date)) {
+    "Invalid date"
   } else {
-    # Create empty data.frame if no file
-    tags_log <- data.frame(
-      stage = character(),
-      version = integer(),
-      date = as.POSIXct(character()),
-      comment = character(),
-      stringsAsFactors = FALSE
-    )
+    format(last_tag$date, "%Y-%m-%d")
   }
-
-  # Get next version for this stage
-  existing_versions <- tags_log$version[tags_log$stage == stage]
-  next_version <- if (length(existing_versions) == 0) 1 else max(existing_versions) + 1
-
-  # Current datetime
-  now <- Sys.time()
-
-  # New entry
-  new_tag <- data.frame(
-    stage = stage,
-    version = next_version,
-    date = now,
-    comment = comment,
-    stringsAsFactors = FALSE
-  )
-
-  # Append and order by date descending
-  tags_log <- rbind(tags_log, new_tag)
-  tags_log <- tags_log[order(tags_log$date, decreasing = TRUE), ]
-
-  # Save back to excel
-  openxlsx::write.xlsx(tags_log, file = file_path, overwrite = TRUE)
-
-  invisible(new_tag)
+  cat(sprintf("%-9s | v%-6d | %s\n\n", last_tag$stage, last_tag$version, date_str))
+  cat(last_tag$comment, "\n")
+  return(invisible(NULL))
 }
+
+
