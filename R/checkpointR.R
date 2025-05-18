@@ -14,8 +14,19 @@ NULL
 #'
 #' @return Invisibly returns NULL. Side effect: saves an RDS file and updates Excel log.
 #' @export
+#' Save a checkpoint of an R object with versioning and logging
+#'
+#' Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
+#'
+#' @param stage Character. Required. Stage name to categorize the checkpoint.
+#' @param obj The R object to save. Default is `procdata`.
+#' @param name Character. Optional. Name of the object to save. Default is derived from the object.
+#' @param comment Optional character. Additional comment to record with the checkpoint.
+#'
+#' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
+#' @export
 check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
-  if (missing(stage) || stage == "") stop("You must specify a 'stage' to save the checkpoint.")
+  if (missing(stage) || stage == "") stop("❌ You must specify a valid 'stage' as a non-empty string.")
   if (is.null(name)) name <- deparse(substitute(obj))
 
   base_folder <- "4_checkpoint"
@@ -36,6 +47,7 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
       DATE = character(),
       COMMENT = character(),
       FILE = character(),
+      DATE_UNIX = numeric(),
       stringsAsFactors = FALSE
     )
   }
@@ -50,113 +62,108 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   attr(obj, "checkpoint_info") <- list(name = name, stage = stage, version = version)
   attr(obj, "comment") <- ifelse(is.null(comment), "", comment)
 
-  now <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  now <- Sys.time()
   new_log <- data.frame(
     STAGE = stage,
     NAME = name,
     VERSION = version,
-    DATE = now,
+    DATE = format(now, "%Y-%m-%d %H:%M:%S"),
     COMMENT = ifelse(is.null(comment), "", comment),
     FILE = file.path(stage, file_name),
+    DATE_UNIX = as.numeric(now),
     stringsAsFactors = FALSE
   )
 
   log <- rbind(log, new_log)
 
-  # Reordenar según prioridad
-  log$DATE_POSIX <- as.POSIXct(log$DATE)
+  # Ordering logic
   log <- log |>
     dplyr::group_by(STAGE) |>
-    dplyr::mutate(MAX_STAGE_DATE = max(DATE_POSIX)) |>
+    dplyr::mutate(STAGE_LATEST = max(DATE_UNIX)) |>
+    dplyr::ungroup() |>
+    dplyr::group_by(STAGE, NAME) |>
+    dplyr::mutate(NAME_LATEST = max(DATE_UNIX)) |>
     dplyr::ungroup() |>
     dplyr::mutate(NAME_PRIORITY = ifelse(NAME == "procdata", 0, 1)) |>
     dplyr::arrange(
-      dplyr::desc(MAX_STAGE_DATE),
+      dplyr::desc(STAGE_LATEST),
       NAME_PRIORITY,
-      NAME,
-      dplyr::desc(DATE_POSIX)
+      dplyr::desc(NAME_LATEST),
+      dplyr::desc(DATE_UNIX)
     ) |>
-    dplyr::select(-MAX_STAGE_DATE, -NAME_PRIORITY, -DATE_POSIX)
+    dplyr::select(-STAGE_LATEST, -NAME_LATEST, -NAME_PRIORITY)
 
-  # Formato Excel
+  # Excel output
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
 
-  # Estilos
-  header_style <- openxlsx::createStyle(textDecoration = "bold", halign = "center")
-  center_style <- openxlsx::createStyle(halign = "center")
-  wrap_style <- openxlsx::createStyle(wrapText = FALSE)
-
+  header_style <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#DCE6F1")
   openxlsx::writeData(wb, "log", log, headerStyle = header_style)
 
-  n <- nrow(log)
-  openxlsx::addStyle(wb, "log", center_style, cols = 3, rows = 1:(n + 1), gridExpand = TRUE)  # VERSION
-  openxlsx::addStyle(wb, "log", center_style, cols = 4, rows = 2:(n + 1), gridExpand = TRUE)  # DATE
-  openxlsx::addStyle(wb, "log", wrap_style, cols = 6, rows = 2:(n + 1), gridExpand = TRUE)    # FILE
+  center_style <- openxlsx::createStyle(halign = "center")
+  nowrap_style <- openxlsx::createStyle(wrapText = FALSE)
+  border_header <- openxlsx::createStyle(border = "bottom", borderColour = "black")
+  border_stage <- openxlsx::createStyle(border = "bottom", borderColour = "black")
 
-  # Anchos
-  openxlsx::setColWidths(wb, "log", cols = 1:5, widths = "auto")
-  openxlsx::setColWidths(wb, "log", cols = 3, widths = 10) # ancho un poco más para VERSION
-  openxlsx::setColWidths(wb, "log", cols = 6, widths = nchar("FILE") + 1) # cortar FILE por ancho
+  openxlsx::addStyle(wb, "log", center_style, cols = 3, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", center_style, cols = 4, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", nowrap_style, cols = 6, rows = 2:(nrow(log) + 1), gridExpand = TRUE)
+  openxlsx::addStyle(wb, "log", border_header, rows = 1, cols = 1:6, gridExpand = TRUE)
 
-  # Colorear y líneas entre stages
   stage_vector <- log$STAGE
   unique_stages <- unique(stage_vector)
   gray <- "#F2F2F2"
   white <- "#FFFFFF"
-  border_style <- openxlsx::createStyle(border = "top", borderStyle = "thick")
 
   for (i in seq_along(unique_stages)) {
-    stage_rows <- which(stage_vector == unique_stages[i]) + 1
-    fill_color <- if (i %% 2 == 0) gray else white
+    rows <- which(stage_vector == unique_stages[i]) + 1
+    fill_color <- if ((i %% 2) == 1) white else gray
     fill_style <- openxlsx::createStyle(fgFill = fill_color)
-    openxlsx::addStyle(wb, "log", style = fill_style, rows = stage_rows, cols = 1:6, gridExpand = TRUE)
+    openxlsx::addStyle(wb, "log", style = fill_style, cols = 1:6, rows = rows, gridExpand = TRUE)
 
-    # Línea separadora superior
-    if (length(stage_rows) > 0) {
-      openxlsx::addStyle(wb, "log", style = border_style, rows = min(stage_rows), cols = 1:6, gridExpand = TRUE)
-    }
+    last_row <- max(rows)
+    openxlsx::addStyle(wb, "log", style = border_stage, rows = last_row, cols = 1:6, gridExpand = TRUE, stack = TRUE)
   }
 
+  openxlsx::setColWidths(wb, "log", cols = 1:5, widths = "auto")
+  openxlsx::setColWidths(wb, "log", cols = 3, widths = 10)
+  openxlsx::setColWidths(wb, "log", cols = 6, widths = 25)
+  openxlsx::setColWidths(wb, "log", cols = 7, widths = 0, hidden = TRUE)
+
   openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
-  message(sprintf("✅ Checkpoint '%s' version v%d saved.", name, version))
+  message(sprintf("🏷️  Checkpoint saved: [%s] %s v%d → %s", stage, name, version, file.path(stage, file_name)))
   invisible(NULL)
 }
 
 
 
-#' Load a checkpointed R object by stage, name, and version
+
+#' Load a saved checkpoint object from a given stage and version
 #'
-#' Loads a previously saved checkpoint object from the specified stage folder.
+#' @param stage Character. Stage from which to load the checkpoint.
+#' @param name Character. Name of the object to load. Default is "procdata".
+#' @param version Integer. Specific version to load. If NULL, loads the most recent.
+#' @param folder Character. Folder where checkpoints are stored. Default is "4_checkpoint".
+#' @param envir Environment. Where to assign the loaded object. Default is global environment.
+#' @param quiet Logical. If TRUE, suppress console output. Default is FALSE.
 #'
-#' @param stage Character. Stage name where the checkpoint was saved.
-#' @param name Character. Name of the object to load. Default is `"procdata"`.
-#' @param version Numeric or NULL. Version number to load. If NULL, loads the latest version.
-#' @param folder Character. Base folder where checkpoints are stored. Default is `"4_checkpoint"`.
-#' @param envir Environment where to assign the loaded object. Default is `.GlobalEnv`.
-#' @param quiet Logical. If TRUE, suppresses informational output. Default is FALSE.
-#'
-#' @return Invisible NULL. Side effect: assigns the loaded object into the environment.
+#' @return Invisible NULL. Assigns the object in the specified environment.
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_load(stage = "preprocessing", name = "mydata", version = 2)
-#' }
 check_load <- function(stage, name = "procdata", version = NULL, folder = "4_checkpoint",
                        envir = .GlobalEnv, quiet = FALSE) {
+
   stage_folder <- file.path(folder, stage)
   log_path <- file.path(folder, "log.xlsx")
 
   if (!file.exists(log_path)) {
-    stop("Log file not found in ", folder)
+    stop("❌ Log file not found in ", folder)
   }
 
   log <- openxlsx::read.xlsx(log_path)
   filtered_log <- log[log$STAGE == stage & log$NAME == name, ]
 
   if (nrow(filtered_log) == 0) {
-    stop(sprintf("No checkpoints found for stage '%s' and name '%s'.", stage, name))
+    stop(sprintf("❌ No checkpoints found for stage '%s' and name '%s'.", stage, name))
   }
 
   if (is.null(version)) {
@@ -165,14 +172,14 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
 
   version_log <- filtered_log[filtered_log$VERSION == version, ]
   if (nrow(version_log) == 0) {
-    stop(sprintf("Version %d not found for stage '%s' and name '%s'.", version, stage, name))
+    stop(sprintf("❌ Version %d not found for stage '%s' and name '%s'.", version, stage, name))
   }
 
   file_name <- basename(version_log$FILE)
   file_path <- file.path(stage_folder, file_name)
 
   if (!file.exists(file_path)) {
-    stop("Checkpoint file not found: ", file_path)
+    stop("❌ Checkpoint file not found: ", file_path)
   }
 
   obj <- readRDS(file_path)
@@ -184,95 +191,192 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
   )
 
   assign(name, obj, envir = envir)
-  date <- format(file.info(file_path)$ctime, "%Y-%m-%d")
 
   if (!quiet) {
-    cat("\n✅ Loaded checkpoint:\n")
-    cat(sprintf("  %-8s | %-7s | %-7s | %s\n", "NAME", "STAGE", "VERSION", "DATE"))
-    cat(sprintf("  %-8s | %-7s | %-7d | %s\n\n", name, stage, version, date))
+    message(sprintf("✅ Loaded checkpoint: [%s] %s v%d", stage, name, version))
   }
 
   invisible(NULL)
 }
 
 
-#' Overview of available and loaded checkpoints
+
+#' Show an overview of available and loaded checkpoints
 #'
-#' Provides a summary table of saved checkpoint versions and currently loaded checkpoint objects.
+#' @param stage Optional character vector. If provided, filters by stage(s).
+#' @param envir Environment. The environment where loaded objects are searched. Default is global.
 #'
-#' @param stage Optional character vector. Filter checkpoints by stage(s). Default is NULL (all stages).
-#' @param envir Environment to check loaded objects. Default is `.GlobalEnv`.
-#'
-#' @return A list with two tibbles: `available_versions` and `loaded_bases`.
+#' @return A list with two tibbles: available_versions and loaded_bases.
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' overview <- check_overview()
-#' print(overview$available_versions)
-#' print(overview$loaded_bases)
-#' }
 check_overview <- function(stage = NULL, envir = .GlobalEnv) {
   log_path <- file.path("4_checkpoint", "log.xlsx")
 
   if (!file.exists(log_path)) {
-    stop("Checkpoint log file does not exist.")
+    stop("❌ Checkpoint log file does not exist.")
   }
 
   log <- openxlsx::read.xlsx(log_path)
 
-  if (!is.null(stage)) {
-    log <- log %>% dplyr::filter(stage %in% stage)
-  }
-
-  log <- log %>%
-    dplyr::filter(file.exists(file.path("4_checkpoint", file)))
+  log <- log %>% dplyr::filter(file.exists(file.path("4_checkpoint", FILE)))
 
   if (nrow(log) == 0) {
-    message("No checkpoint records with existing files.")
+    message("⚠️ No valid checkpoint records found with existing files.")
     return(NULL)
   }
 
-  summary <- log %>%
-    dplyr::group_by(name, stage) %>%
-    dplyr::summarise(
-      versions = paste(sort(version), collapse = ", "),
-      date = max(date),
-      .groups = "drop"
-    )
+  if (!is.null(stage)) {
+    log <- log %>% dplyr::filter(STAGE %in% stage)
 
-  env_objs <- ls(envir = envir)
-
-  loaded <- lapply(env_objs, function(obj_name) {
-    obj <- get(obj_name, envir = envir)
-    info <- attr(obj, "checkpoint_info")
-    if (!is.null(info)) {
-      tibble::tibble(
-        name = obj_name,
-        stage = info$stage,
-        version = info$version,
-        date = log %>%
-          dplyr::filter(name == obj_name, stage == info$stage, version == info$version) %>%
-          dplyr::pull(date) %>%
-          dplyr::first()
-      )
-    } else {
-      NULL
+    if (nrow(log) == 0) {
+      message("⚠️ No checkpoints found for the specified stage.")
+      return(NULL)
     }
-  }) %>% dplyr::bind_rows()
 
-  sort_table <- function(df) {
-    df %>%
-      dplyr::mutate(
-        name = factor(name, levels = c("procdata", sort(setdiff(unique(name), "procdata"))))
-      ) %>%
-      dplyr::arrange(name, stage, if ("versions" %in% colnames(df)) versions else version)
+    # Tabla larga por versión
+    version_table <- log %>%
+      dplyr::arrange(dplyr::desc(VERSION)) %>%
+      dplyr::transmute(
+        VERSIONS = VERSION,
+        NAME,
+        DATE = format(as.POSIXct(DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d %H:%M:%S")
+      )
+
+    comment_table <- log %>%
+      dplyr::arrange(dplyr::desc(VERSION)) %>%
+      dplyr::transmute(
+        VERSIONS = VERSION,
+        COMMENT = ifelse(is.na(COMMENT) | COMMENT == "", "(no comment)", COMMENT)
+      )
+
+    print_table_clean <- function(df, title, rename_versions = FALSE) {
+      message(title)
+
+      df <- as.data.frame(df)
+      if (rename_versions) names(df)[1] <- "VERSION"
+
+      headers <- names(df)
+      col_widths <- sapply(df, function(col) max(nchar(as.character(col)), na.rm = TRUE))
+      col_widths <- pmax(col_widths, nchar(headers))
+      formatted_headers <- mapply(format, headers, width = col_widths, MoreArgs = list(justify = "centre"))
+      separator <- paste(rep(".", sum(col_widths) + 3 * (ncol(df) - 1)), collapse = "")
+      cat(paste(formatted_headers, collapse = "   "), "\n")
+      cat(separator, "\n")
+
+      for (i in seq_len(nrow(df))) {
+        row <- sapply(seq_along(df), function(j) {
+          val <- as.character(df[i, j])
+          justify <- if (j == 1) "centre" else "left"
+          format(val, width = col_widths[j], justify = justify)
+        })
+        cat(paste(row, collapse = "   "), "\n")
+      }
+    }
+
+    version_title <- sprintf("\n✅ CHECKPOINT VERSIONS STAGE: %s ✅\n", unique(log$STAGE))
+    print_table_clean(version_table, version_title)
+    print_table_clean(comment_table, "\n💬 COMMENTS ASSOCIATED 💬\n", rename_versions = TRUE)
+
+    invisible(list(
+      versions_long = version_table,
+      comments = comment_table
+    ))
+  } else {
+    # Tabla resumida
+    summary <- log %>%
+      dplyr::group_by(NAME, STAGE) %>%
+      dplyr::summarise(
+        VERSIONS = paste(sort(VERSION), collapse = ", "),
+        DATE = format(as.POSIXct(max(DATE_UNIX), origin = "1970-01-01"), "%Y-%m-%d"),
+        .groups = "drop"
+      )
+
+    # Objetos cargados
+    env_objs <- ls(envir = envir)
+    loaded <- lapply(env_objs, function(obj_name) {
+      obj <- get(obj_name, envir = envir)
+      info <- attr(obj, "checkpoint_info")
+      if (!is.null(info)) {
+        unix_time <- log %>%
+          dplyr::filter(NAME == obj_name, STAGE == info$stage, VERSION == info$version) %>%
+          dplyr::pull(DATE_UNIX) %>%
+          dplyr::first()
+
+        tibble::tibble(
+          NAME = obj_name,
+          STAGE = info$stage,
+          VERSION = info$version,
+          DATE = format(as.POSIXct(unix_time, origin = "1970-01-01"), "%Y-%m-%d")
+        )
+      } else {
+        NULL
+      }
+    }) %>% dplyr::bind_rows()
+
+    # Ordenar con procdata primero
+    sort_table <- function(df) {
+      df %>%
+        dplyr::mutate(NAME = factor(NAME, levels = c("procdata", sort(setdiff(unique(NAME), "procdata"))))) %>%
+        dplyr::arrange(NAME, STAGE, dplyr::desc(if ("VERSIONS" %in% colnames(df)) VERSIONS else VERSION))
+    }
+
+    format_table <- function(df, title, is_summary = FALSE) {
+      if (nrow(df) == 0) {
+        cat("\n", title, "\n\n")
+        headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
+        header_line <- paste(format(headers, justify = "centre"), collapse = "   ")
+        separator <- paste(rep(".", nchar(header_line)), collapse = "")
+        cat(header_line, "\n")
+        cat(separator, "\n")
+        cat("(empty)\n")
+        return(invisible(NULL))
+      }
+
+      df <- as.data.frame(df)
+      name_chr <- as.character(df$NAME)
+      stage_chr <- as.character(df$STAGE)
+      date_chr <- as.character(df$DATE)
+
+      name <- format(name_chr, width = max(nchar(name_chr)), justify = "left")
+      stage <- format(stage_chr, width = max(nchar(stage_chr)), justify = "left")
+
+      if (is_summary) {
+        versions_chr <- as.character(df$VERSIONS)
+        versions <- format(versions_chr, width = max(nchar(versions_chr)), justify = "centre")
+      } else {
+        version_chr <- as.character(df$VERSION)
+        versions <- format(version_chr, width = max(nchar(version_chr)), justify = "centre")
+      }
+
+      date <- format(date_chr, width = max(nchar(date_chr)), justify = "centre")
+
+      # Anchura por columna para encabezado
+      widths <- c(
+        max(nchar(name_chr)),
+        max(nchar(stage_chr)),
+        if (is_summary) max(nchar(versions_chr)) else max(nchar(version_chr)),
+        max(nchar(date_chr))
+      )
+
+      headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
+      headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+      separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
+      body <- paste(name, stage, versions, date, sep = "   ")
+
+      # Mostrar tabla
+      cat("\n", title, "\n\n")
+      cat(paste(headers_fmt, collapse = "   "), "\n")
+      cat(separator, "\n")
+      cat(paste(body, collapse = "\n"), "\n")
+    }
+
+    format_table(sort_table(summary), title = "\n✅ AVAILABLE CHECKPOINTS ✅", is_summary = TRUE)
+    format_table(sort_table(loaded), title = "\n✅ LOADED CHECKPOINTS ✅", is_summary = FALSE)
+
+    invisible(list(
+      available_versions = sort_table(summary),
+      loaded_bases = sort_table(loaded)
+    ))
   }
-
-  list(
-    available_versions = sort_table(summary),
-    loaded_bases = sort_table(loaded)
-  )
 }
 
 
