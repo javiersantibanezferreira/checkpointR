@@ -3,27 +3,16 @@
 #' @import tibble
 NULL
 
-#' Save a checkpoint of an R object with versioning and styled logging
+#' Save a checkpoint of an R object
 #'
-#' Saves an R object to a versioned .rds file and logs the event in a formatted Excel sheet.
-#'
-#' @param stage Character. Required. Stage of the project.
-#' @param obj The R object to save. Defaults to `procdata`.
-#' @param name Character. Optional. Name of the object to save. If NULL, uses the variable name.
-#' @param comment Character. Optional. A comment to include in the log.
-#'
-#' @return Invisibly returns NULL. Side effect: saves an RDS file and updates Excel log.
-#' @export
-#' Save a checkpoint of an R object with versioning and logging
-#'
-#' Saves an object to a specified stage folder with version control and logs the save event in an Excel file.
+#' Saves an object to a versioned .rds file in a stage-specific folder and logs the event in a styled Excel file (`log.xlsx`).
 #'
 #' @param stage Character. Required. Stage name to categorize the checkpoint.
-#' @param obj The R object to save. Default is `procdata`.
-#' @param name Character. Optional. Name of the object to save. Default is derived from the object.
-#' @param comment Optional character. Additional comment to record with the checkpoint.
+#' @param obj The R object to save. Defaults to `procdata`.
+#' @param name Character. Optional. Name of the object to save. Defaults to the name of `obj`.
+#' @param comment Character. Optional. Comment to record with the checkpoint.
 #'
-#' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
+#' @return Invisibly returns NULL. Side effect: saves a .rds file and updates the Excel log.
 #' @export
 check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   if (missing(stage) || stage == "") stop("❌ You must specify a valid 'stage' as a non-empty string.")
@@ -135,9 +124,6 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   invisible(NULL)
 }
 
-
-
-
 #' Load a saved checkpoint object from a given stage and version
 #'
 #' @param stage Character. Stage from which to load the checkpoint.
@@ -198,8 +184,6 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
 
   invisible(NULL)
 }
-
-
 
 #' Show an overview of available and loaded checkpoints
 #'
@@ -314,6 +298,8 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
 
     # Ordenar con procdata primero
     sort_table <- function(df) {
+      if (!"NAME" %in% colnames(df)) return(df)
+
       df %>%
         dplyr::mutate(NAME = factor(NAME, levels = c("procdata", sort(setdiff(unique(NAME), "procdata"))))) %>%
         dplyr::arrange(NAME, STAGE, dplyr::desc(if ("VERSIONS" %in% colnames(df)) VERSIONS else VERSION))
@@ -379,30 +365,39 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
   }
 }
 
-
-#' Print attributes and metadata of checkpointed objects
+#' Display attributes of checkpointed objects
 #'
-#' Displays checkpoint information and comments for loaded or saved objects.
+#' Shows checkpoint metadata for a specific object or for all loaded objects with checkpoint attributes.
 #'
-#' @param stage Optional character. Stage name to filter or inspect. If NULL, prints all loaded objects with checkpoint info.
-#' @param obj Character. Name of the object to inspect. Default is `"procdata"`.
-#' @param version Numeric or NULL. Version to inspect. If NULL, latest version is used.
+#' @param stage Optional. Character. Stage name to filter or load from. If NULL, checks all loaded objects.
+#' @param name Optional. Character. Name of the object to inspect. Default is `"procdata"`.
+#' @param version Optional. Numeric. Version to inspect. If NULL, uses the most recent version.
 #'
-#' @return Invisible NULL. Prints metadata to console.
+#' @return Invisibly returns NULL. Outputs formatted checkpoint metadata to the console.
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_attr(stage = "preprocessing", obj = "mydata", version = 2)
-#' }
-check_attr <- function(stage = NULL, obj = "procdata", version = NULL) {
+check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
   if (is.null(stage)) {
     loaded <- ls(envir = .GlobalEnv)
+    rows <- list()
 
-    for (name in loaded) {
-      base <- get(name, envir = .GlobalEnv)
+    for (name_loaded in loaded) {
+      base <- get(name_loaded, envir = .GlobalEnv)
       info <- attr(base, "checkpoint_info")
       comment <- attr(base, "comment")
+
+      log_path <- file.path("4_checkpoint", "log.xlsx")
+      if (!file.exists(log_path)) {
+        stop("❌ Log file not found.")
+      }
+      log_df <- openxlsx::read.xlsx(log_path)
+      log_df <- log_df[log_df$STAGE == info$stage & log_df$NAME == info$name & log_df$VERSION == info$version, ]
+
+      if (nrow(log_df) > 0) {
+        comment <- ifelse(is.na(log_df$COMMENT) || log_df$COMMENT == "", "(no comment)", log_df$COMMENT)
+      } else {
+        comment <- "(no comment)"
+      }
+
 
       if (!is.null(info)) {
         folder <- file.path("4_checkpoint", info$stage)
@@ -413,49 +408,82 @@ check_attr <- function(stage = NULL, obj = "procdata", version = NULL) {
           "Date not available"
         }
 
-        cat(sprintf("\n  %-8s | %-7s | %-7s | %s\n", "name", "stage", "version", "date"))
-        cat(sprintf("  %-8s | %-7s | %-7d | %s\n", info$name, info$stage, info$version, date))
+        comment_text <- ifelse(is.null(comment) || comment == "", "(no comment)", comment)
 
-        if (!is.null(comment)) {
-          cat("\n(", comment, ")\n", sep = "")
-        } else {
-          cat("\n(No comment)\n")
-        }
+        rows[[length(rows) + 1]] <- list(
+          NAME = info$name,
+          STAGE = info$stage,
+          VERSION = info$version,
+          DATE = date,
+          COMMENT = comment_text
+        )
       }
+    }
+
+    if (length(rows) == 0) {
+      message("❌ No loaded objects with checkpoint information found.")
+      return(invisible(NULL))
+    }
+
+    df <- do.call(rbind.data.frame, rows)
+    names(df) <- c("NAME", "STAGE", "VERSION", "DATE", "COMMENT")
+
+    cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
+    headers <- c("NAME", "STAGE", "VERSION", "DATE")
+    widths <- sapply(df[headers], function(col) max(nchar(as.character(col))))
+    headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+    separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
+
+    cat(paste(headers_fmt, collapse = "   "), "\n")
+    cat(separator, "\n")
+
+    for (i in seq_len(nrow(df))) {
+      row <- sapply(seq_along(headers), function(j) {
+        col_value <- as.character(df[i, headers[j]])
+        align <- if (headers[j] %in% c("VERSION", "DATE")) "centre" else "left"
+        format(col_value, width = widths[j], justify = align)
+      })
+      cat(paste(row, collapse = "   "), "
+")
+    }
+
+    cat("\nCOMMENTS:\n")
+    for (i in seq_len(nrow(df))) {
+      cat(sprintf("%s v%d: %s\n", df$NAME[i], df$VERSION[i], df$COMMENT[i]))
     }
 
     return(invisible(NULL))
   }
 
   if (is.null(stage)) {
-    stop("You must specify the stage to inspect a specific object.")
+    stop("❌ You must specify the stage to inspect a specific object.")
   }
 
-  if (is.null(obj)) obj <- "procdata"
+  if (is.null(name)) name <- "procdata"
 
   if (is.null(version)) {
     folder <- file.path("4_checkpoint", stage)
-    files <- list.files(folder, pattern = paste0("^", stage, "_", obj, "_v[0-9]+\\.rds$"))
+    files <- list.files(folder, pattern = paste0("^", stage, "_", name, "_v[0-9]+\\.rds$"))
 
     if (length(files) == 0) {
-      stop("No checkpoints found for ", obj, " in stage ", stage)
+      stop("❌ No checkpoints found for ", name, " in stage ", stage)
     }
 
-    versions <- as.integer(gsub(paste0("^", stage, "_", obj, "_v([0-9]+)\\.rds$"), "\\1", files))
+    versions <- as.integer(gsub(paste0("^", stage, "_", name, "_v([0-9]+)\\.rds$"), "\\1", files))
     version <- max(versions, na.rm = TRUE)
   }
 
-  if (!exists(obj, envir = .GlobalEnv)) {
-    check_load(stage = stage, name = obj, version = version, quiet = TRUE)
+  if (!exists(name, envir = .GlobalEnv)) {
+    check_load(stage = stage, name = name, version = version, quiet = TRUE)
   } else {
-    current <- get(obj, envir = .GlobalEnv)
+    current <- get(name, envir = .GlobalEnv)
     attr_info <- attr(current, "checkpoint_info")
-    if (is.null(attr_info) || attr_info$version != version || attr_info$stage != stage || attr_info$name != obj) {
-      check_load(stage = stage, name = obj, version = version, quiet = TRUE)
+    if (is.null(attr_info) || attr_info$version != version || attr_info$stage != stage || attr_info$name != name) {
+      check_load(stage = stage, name = name, version = version, quiet = TRUE)
     }
   }
 
-  base <- get(obj, envir = .GlobalEnv)
+  base <- get(name, envir = .GlobalEnv)
   info <- attr(base, "checkpoint_info")
   comment <- attr(base, "comment")
 
@@ -467,18 +495,17 @@ check_attr <- function(stage = NULL, obj = "procdata", version = NULL) {
     "Date not available"
   }
 
-  cat(sprintf("\n  %-8s | %-7s | %-7s | %s\n", "name", "stage", "version", "date"))
-  cat(sprintf("  %-8s | %-7s | %-7d | %s\n", info$name, info$stage, info$version, date))
+  comment_text <- ifelse(is.null(comment) || comment == "", "(no comment)", comment)
 
-  if (!is.null(comment)) {
-    cat("\n(", comment, ")\n", sep = "")
-  } else {
-    cat("\n(No comment)\n")
-  }
+  cat("\n✅ CHECKPOINT ATTRIBUTES ✅\n\n")
+  cat(sprintf("%-8s | %-7s | %-7s | %s\n", "NAME", "STAGE", "VERSION", "DATE"))
+  cat("-----------------------------------------------\n")
+  cat(sprintf("%-8s | %-7s | v%-6d | %s\n\n", info$name, info$stage, info$version, date))
+  cat("COMMENT:\n")
+  cat(comment_text, "\n")
 
   invisible(NULL)
 }
-
 
 #' Check for Equal Checkpoints in a Given Stage
 #'
@@ -584,47 +611,15 @@ check_equal <- function(stage) {
   return(result)
 }
 
-#' Add a new checkpoint tag with comment
+#' Add a new tag to a project stage
 #'
-#' \code{check_tag} adds a new comment tag for a given project stage.
-#' The tag includes an automatically assigned version, timestamp, and optional description.
+#' Registers a comment tag for a project stage. A tag includes version, timestamp, and optional comment. Logged to `tags_log.xlsx`.
 #'
-#' If the file \code{4_checkpoint/tags_log.xlsx} does not exist, it is created automatically.
+#' @param stage Character. Required. The project stage.
+#' @param comment Character. Optional. Description or comment for the tag.
 #'
-#' @param stage Character. The project stage (required).
-#' @param comment Character. Optional comment describing the stage or changes.
-#'
-#' @return Invisibly returns the new tag as a data.frame.
+#' @return Invisibly returns a data.frame with the new tag.
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_tag("data_cleaning", "Removed NA values and filtered rows")
-#' }
-#' Add a new checkpoint tag with comment
-#'
-#' @param stage Character. The project stage (required).
-#' @param comment Character. Optional comment describing the stage or changes.
-#'
-#' @return Invisibly returns the new tag as a data.frame.
-#' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_tag("data_cleaning", "Removed NA values and filtered rows")
-#' }
-#' Add a new checkpoint tag with comment
-#'
-#' @param stage Character. The project stage (required).
-#' @param comment Character. Optional comment describing the stage or changes.
-#'
-#' @return Invisibly returns the new tag as a data.frame.
-#' @export
-#'
-#' @examples
-#' \dontrun{
-#' check_tag("data_cleaning", "Removed NA values and filtered rows")
-#' }
 check_tag <- function(stage, comment = "") {
   if (missing(stage) || !is.character(stage) || length(stage) != 1) {
     stop("You must provide a single 'stage' string.")
@@ -709,85 +704,14 @@ check_tag <- function(stage, comment = "") {
   invisible(new_row)
 }
 
-
-
-
-#' Manage and Display Checkpoint Tags
+#' Show registered checkpoint tags
 #'
-#' \code{check_tags} retrieves and displays information from checkpoint tags stored in an Excel log.
+#' Displays information from the tags log (`tags_log.xlsx`) including summaries, specific tags, or the latest tag.
 #'
-#' If no \code{tags_log.xlsx} exists, it will create an empty log file.
+#' @param stage Optional. Character. Stage name. Use `"stages"` to show one tag per stage.
+#' @param version Optional. Integer. Specific version to display from a stage.
 #'
-#' @param stage Optional. A character string specifying the project stage to filter tags.
-#' Use \code{"stages"} to list all stages with their latest tag.
-#' @param version Optional. An integer specifying a version number for a given stage.
-#'
-#' @return Invisibly returns NULL. Outputs tag information to the console.
-#'
-#' @details
-#' - If called with no arguments, shows the most recent tag overall.
-#' - If called with \code{stage} only, shows all tags for that stage ordered newest to oldest.
-#' - If called with \code{stage = "stages"}, shows all stages with their latest tag summary.
-#' - If called with \code{stage} and \code{version}, shows the specific tag for that stage.
-#'
-#' The tags log file is saved as \code{"4_checkpoint/tags_log.xlsx"}.
-#'
-#' @examples
-#' \dontrun{
-#' check_tags()                               # Show last tag overall
-#' check_tags(stage = "data_clean")          # Show all tags for 'data_clean' stage
-#' check_tags(stage = "data_clean", version = 2)  # Show tag version 2
-#' check_tags(stage = "stages")              # Show summary of all stages
-#' }
-#' @export
-#' Manage and Display Checkpoint Tags
-#'
-#' \code{check_tags} retrieves and displays information from checkpoint tags stored in an Excel log.
-#'
-#' If no \code{tags_log.xlsx} exists, it will create an empty log file.
-#'
-#' @param stage Optional. A character string specifying the project stage to filter tags.
-#' Use \code{"stages"} to list all stages with their latest tag.
-#' @param version Optional. An integer specifying a version number for a given stage.
-#'
-#' @return Invisibly returns NULL. Outputs tag information to the console.
-#'
-#' @details
-#' - If called with no arguments, shows the most recent tag overall.
-#' - If called with \code{stage} only, shows all tags for that stage ordered newest to oldest.
-#' - If called with \code{stage = "stages"}, shows all stages with their latest tag summary.
-#' - If called with \code{stage} and \code{version}, shows the specific tag for that stage.
-#'
-#' The tags log file is saved as \code{"4_checkpoint/tags_log.xlsx"}.
-#'
-#' @examples
-#' \dontrun{
-#' check_tags()                               # Show last tag overall
-#' check_tags(stage = "data_clean")          # Show all tags for 'data_clean' stage
-#' check_tags(stage = "data_clean", version = 2)  # Show tag version 2
-#' check_tags(stage = "stages")              # Show summary of all stages
-#' }
-#' @export
-#' Manage and Display Checkpoint Tags
-#'
-#' \code{check_tags} retrieves and displays information from checkpoint tags stored in an Excel log.
-#'
-#' If no \code{tags_log.xlsx} exists, it will create an empty log file.
-#'
-#' @param stage Optional. A character string specifying the project stage to filter tags.
-#' Use \code{"stages"} to list all stages with their latest tag.
-#' @param version Optional. An integer specifying a version number for a given stage.
-#'
-#' @return Invisibly returns NULL. Outputs tag information to the console.
-#'
-#' @details
-#' - If called with no arguments, shows the most recent tag overall.
-#' - If called with \code{stage} only, shows all tags for that stage ordered newest to oldest.
-#' - If called with \code{stage = "stages"}, shows all stages with their latest tag summary.
-#' - If called with \code{stage} and \code{version}, shows the specific tag for that stage.
-#'
-#' The tags log file is saved as \code{"4_checkpoint/tags_log.xlsx"}.
-#'
+#' @return Invisibly returns NULL. Outputs tag data to the console.
 #' @export
 check_tags <- function(stage = NULL, version = NULL) {
   log_path <- file.path("4_checkpoint", "tags_log.xlsx")
@@ -808,11 +732,10 @@ check_tags <- function(stage = NULL, version = NULL) {
   tags <- openxlsx::read.xlsx(log_path)
 
   if (nrow(tags) == 0) {
-    message("No tags found in tags_log.xlsx.")
+    message("❌ No tags found in tags_log.xlsx.")
     return(invisible(NULL))
   }
 
-  # Convertir DATE_UNIX a formato POSIXct y guardarlo como 'date'
   tags$date <- as.POSIXct(tags$DATE_UNIX, origin = "1970-01-01", tz = "UTC")
 
   # === 1. SUMMARY OF STAGES ===
@@ -826,10 +749,10 @@ check_tags <- function(stage = NULL, version = NULL) {
       dplyr::select(STAGE, VERSION, date_short)
 
     cat("\n✅ TAG STAGES SUMMARY ✅\n\n")
-    cat(sprintf("%-15s | %-7s | %-12s\n", "Stage", "Version", "Last Comment Date"))
-    cat("-------------------------------------------\n")
+    cat(sprintf("%-15s | %-7s | %-17s\n", "STAGE", "VERSION", "LAST COMMENT DATE"))
+    cat("----------------------------------------------------\n")
     for (i in seq_len(nrow(summary_df))) {
-      cat(sprintf("%-15s | v%-6d | %-12s\n",
+      cat(sprintf("%-15s | v%-6d | %-17s\n",
                   summary_df$STAGE[i], summary_df$VERSION[i], summary_df$date_short[i]))
     }
     return(invisible(NULL))
@@ -839,15 +762,16 @@ check_tags <- function(stage = NULL, version = NULL) {
   if (!is.null(stage) && !is.null(version)) {
     tag_row <- tags[tags$STAGE == stage & tags$VERSION == version, ]
     if (nrow(tag_row) == 0) {
-      message(sprintf("No tag found for stage '%s' with version %d.", stage, version))
+      message(sprintf("❌ No tag found for stage '%s' with version %d.", stage, version))
       return(invisible(NULL))
     }
     cat(sprintf("\n✅ TAG FOR STAGE: %s | VERSION v%d ✅\n\n", toupper(stage), version))
-    cat("Version | Date and Time\n")
-    cat("------------------------\n")
-    cat(sprintf("v%d      | %s\n\n", tag_row$VERSION, format(tag_row$date, "%Y-%m-%d %H:%M:%S")))
-    cat("Comment:\n")
-    cat(sprintf("%s\n", tag_row$COMMENT))
+    cat(sprintf("%-8s | %-19s\n", "VERSION", "DATE AND TIME"))
+    cat("--------------------------------\n")
+    cat(sprintf("v%-7d | %s\n\n", tag_row$VERSION, format(tag_row$date, "%Y-%m-%d %H:%M:%S")))
+    cat("COMMENT:\n")
+    comment_text <- ifelse(is.na(tag_row$COMMENT) || tag_row$COMMENT == "", "(no comment)", tag_row$COMMENT)
+    cat(sprintf("%s\n", comment_text))
     return(invisible(NULL))
   }
 
@@ -855,20 +779,21 @@ check_tags <- function(stage = NULL, version = NULL) {
   if (!is.null(stage)) {
     stage_tags <- tags[tags$STAGE == stage, ]
     if (nrow(stage_tags) == 0) {
-      message(sprintf("No tags found for stage '%s'.", stage))
+      message(sprintf("❌ No tags found for stage '%s'.", stage))
       return(invisible(NULL))
     }
 
     stage_tags <- stage_tags[order(stage_tags$date, decreasing = TRUE), ]
     cat(sprintf("\n✅ TAGS FOR STAGE: %s ✅\n\n", toupper(stage)))
-    cat("Version | Date and Time\n")
-    cat("------------------------\n")
+    cat(sprintf("%-8s | %-19s\n", "VERSION", "DATE AND TIME"))
+    cat("--------------------------------\n")
     for (i in seq_len(nrow(stage_tags))) {
-      cat(sprintf("v%d      | %s\n", stage_tags$VERSION[i], format(stage_tags$date[i], "%Y-%m-%d %H:%M:%S")))
+      cat(sprintf("v%-7d | %s\n", stage_tags$VERSION[i], format(stage_tags$date[i], "%Y-%m-%d %H:%M:%S")))
     }
-    cat("\nComments:\n")
+    cat("\nCOMMENTS:\n")
     for (i in seq_len(nrow(stage_tags))) {
-      cat(sprintf("v%d: %s\n", stage_tags$VERSION[i], stage_tags$COMMENT[i]))
+      comment <- ifelse(is.na(stage_tags$COMMENT[i]) || stage_tags$COMMENT[i] == "", "(no comment)", stage_tags$COMMENT[i])
+      cat(sprintf("v%d: %s\n", stage_tags$VERSION[i], comment))
     }
     return(invisible(NULL))
   }
@@ -876,13 +801,13 @@ check_tags <- function(stage = NULL, version = NULL) {
   # === 4. LAST TAG OVERALL ===
   last_tag <- tags[which.max(tags$date), ]
   cat("\n✅ LAST TAG ✅\n\n")
-  cat(sprintf("Stage     | Version | Date\n"))
-  cat(sprintf("-----------------------------\n"))
-  cat(sprintf("%-9s | v%-6d | %s\n\n",
+  cat(sprintf("%-10s | %-8s | %-10s\n", "STAGE", "VERSION", "DATE"))
+  cat("------------------------------------\n")
+  cat(sprintf("%-10s | v%-7d | %s\n\n",
               last_tag$STAGE,
               last_tag$VERSION,
               format(last_tag$date, "%Y-%m-%d")))
-  cat(last_tag$COMMENT, "\n")
+  comment_text <- ifelse(is.na(last_tag$COMMENT) || last_tag$COMMENT == "", "(no comment)", last_tag$COMMENT)
+  cat(comment_text, "\n")
   return(invisible(NULL))
 }
-
