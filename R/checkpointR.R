@@ -214,11 +214,13 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
     version = version
   )
 
+  assign(name, obj, envir = envir)
+
   if (!quiet) {
     message(sprintf("✅ Loaded checkpoint: [%s] %s v%d", stage, name, version))
   }
 
-  return(obj)
+  invisible(NULL)
 }
 
 
@@ -231,179 +233,147 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
 #' @export
 check_overview <- function(stage = NULL, envir = .GlobalEnv) {
   log_path <- file.path("4_checkpoint", "log.xlsx")
-
-  if (!file.exists(log_path)) {
-    stop("❌ Checkpoint log file does not exist.")
-  }
-
+  if (!file.exists(log_path)) stop("❌ Checkpoint log file does not exist.")
   log <- openxlsx::read.xlsx(log_path)
+  log <- upgrade_log_format(log)
+  log <- log[file.exists(file.path("4_checkpoint", log$FILE)), ]
 
-  log <- log %>% dplyr::filter(file.exists(file.path("4_checkpoint", FILE)))
+  # ========== CASO: stage = "TAGS" ========== #
+  if (!is.null(stage) && stage == "TAGS") {
+    tags <- log[log$IS_TAG, ]
+    checks <- log[!log$IS_TAG & log$TAG != "", ]
 
-  if (nrow(log) == 0) {
-    message("⚠️ No valid checkpoint records found with existing files.")
-    return(NULL)
+    if (nrow(tags) == 0) {
+      message("⚠️ No tags found in log.")
+      return(invisible(NULL))
+    }
+
+    tags <- tags[order(-tags$DATE_UNIX), ]
+
+    last_tag <- tags[1, ]
+    last_tag_checks <- checks[checks$TAG == last_tag$TAG, ]
+    last_summary <- as.data.frame(table(last_tag_checks$STAGE))
+    names(last_summary) <- c("STAGE", "CHECKS")
+
+    cat("\n✅ LAST TAG ✅\n\n")
+    cat(paste("TAG:", last_tag$TAG, "\n"))
+    cat(paste("DATE:", last_tag$DATE, "\n"))
+    cat("\n")
+    print(last_summary, row.names = FALSE)
+    if (last_tag$COMMENT != "") cat("\n💬", last_tag$COMMENT, "\n")
+
+    # Tags vinculados a objetos cargados
+    objs <- ls(envir = envir)
+    loaded_tags <- lapply(objs, function(o) {
+      x <- get(o, envir)
+      info <- attr(x, "checkpoint_info")
+      if (!is.null(info)) {
+        row <- log[log$STAGE == info$stage & log$NAME == info$name & log$VERSION == info$version, ]
+        if (nrow(row) > 0 && row$TAG != "") return(row[, c("NAME", "STAGE", "VERSION", "TAG", "COMMENT")])
+      }
+      return(NULL)
+    })
+    loaded_tags <- do.call(rbind, loaded_tags)
+
+    if (!is.null(loaded_tags) && nrow(loaded_tags) > 0) {
+      cat("\n✅ TAGGED LOADED CHECKPOINTS ✅\n\n")
+      print(loaded_tags, row.names = FALSE)
+    }
+
+    # Historial de todos los tags
+    all_tags_summary <- lapply(split(checks, checks$TAG), function(df) {
+      data.frame(
+        TAG = df$TAG[1],
+        DATE = log$DATE[log$TAG == df$TAG[1] & log$IS_TAG][1],
+        COMMENT = log$COMMENT[log$TAG == df$TAG[1] & log$IS_TAG][1],
+        STAGES = length(unique(df$STAGE)),
+        CHECKS = nrow(df)
+      )
+    })
+    all_tags_summary <- do.call(rbind, all_tags_summary)
+    all_tags_summary <- all_tags_summary[order(-as.numeric(as.POSIXct(all_tags_summary$DATE))), ]
+
+    cat("\n📜 TAG HISTORY 📜\n\n")
+    print(all_tags_summary, row.names = FALSE)
+    invisible(list(
+      last_tag = last_tag,
+      loaded_tags = loaded_tags,
+      tag_history = all_tags_summary
+    ))
   }
 
+  # ========== CASO: stage específico ========== #
   if (!is.null(stage)) {
-    log <- log %>% dplyr::filter(STAGE %in% stage)
-
+    log <- log[log$STAGE == stage & !log$IS_TAG, ]
     if (nrow(log) == 0) {
       message("⚠️ No checkpoints found for the specified stage.")
       return(NULL)
     }
 
-    # Tabla larga por versión
-    version_table <- log %>%
-      dplyr::arrange(dplyr::desc(VERSION)) %>%
-      dplyr::transmute(
-        VERSIONS = VERSION,
-        NAME,
-        DATE = format(as.POSIXct(DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d %H:%M:%S")
-      )
+    log <- log[order(-log$VERSION), ]
+    version_table <- log[, c("VERSION", "NAME", "DATE")]
+    comment_table <- log[, c("VERSION", "COMMENT")]
+    names(comment_table)[1] <- "VERSION"
 
-    comment_table <- log %>%
-      dplyr::arrange(dplyr::desc(VERSION)) %>%
-      dplyr::transmute(
-        VERSIONS = VERSION,
-        COMMENT = ifelse(is.na(COMMENT) | COMMENT == "", "(no comment)", COMMENT)
-      )
-
-    print_table_clean <- function(df, title, rename_versions = FALSE) {
-      message(title)
-
-      df <- as.data.frame(df)
-      if (rename_versions) names(df)[1] <- "VERSION"
-
-      headers <- names(df)
-      col_widths <- sapply(df, function(col) max(nchar(as.character(col)), na.rm = TRUE))
-      col_widths <- pmax(col_widths, nchar(headers))
-      formatted_headers <- mapply(format, headers, width = col_widths, MoreArgs = list(justify = "centre"))
-      separator <- paste(rep(".", sum(col_widths) + 3 * (ncol(df) - 1)), collapse = "")
-      cat(paste(formatted_headers, collapse = "   "), "\n")
-      cat(separator, "\n")
-
-      for (i in seq_len(nrow(df))) {
-        row <- sapply(seq_along(df), function(j) {
-          val <- as.character(df[i, j])
-          justify <- if (j == 1) "centre" else "left"
-          format(val, width = col_widths[j], justify = justify)
-        })
-        cat(paste(row, collapse = "   "), "\n")
-      }
-    }
-
-    version_title <- sprintf("\n✅ CHECKPOINT VERSIONS STAGE: %s ✅\n", unique(log$STAGE))
-    print_table_clean(version_table, version_title)
-    print_table_clean(comment_table, "\n💬 COMMENTS ASSOCIATED 💬\n", rename_versions = TRUE)
-
-    invisible(list(
-      versions_long = version_table,
-      comments = comment_table
-    ))
-  } else {
-    # Tabla resumida
-    summary <- log %>%
-      dplyr::group_by(NAME, STAGE) %>%
-      dplyr::summarise(
-        VERSIONS = paste(sort(VERSION), collapse = ", "),
-        DATE = format(as.POSIXct(max(DATE_UNIX), origin = "1970-01-01"), "%Y-%m-%d"),
-        .groups = "drop"
-      )
-
-    # Objetos cargados
-    env_objs <- ls(envir = envir)
-    loaded <- lapply(env_objs, function(obj_name) {
-      obj <- get(obj_name, envir = envir)
-      info <- attr(obj, "checkpoint_info")
-      if (!is.null(info)) {
-        unix_time <- log %>%
-          dplyr::filter(NAME == obj_name, STAGE == info$stage, VERSION == info$version) %>%
-          dplyr::pull(DATE_UNIX) %>%
-          dplyr::first()
-
-        tibble::tibble(
-          NAME = obj_name,
-          STAGE = info$stage,
-          VERSION = info$version,
-          DATE = format(as.POSIXct(unix_time, origin = "1970-01-01"), "%Y-%m-%d")
-        )
-      } else {
-        NULL
-      }
-    }) %>% dplyr::bind_rows()
-
-    # Ordenar con procdata primero
-    sort_table <- function(df) {
-      if (!"NAME" %in% colnames(df)) return(df)
-
-      df %>%
-        dplyr::mutate(NAME = factor(NAME, levels = c("procdata", sort(setdiff(unique(NAME), "procdata"))))) %>%
-        dplyr::arrange(NAME, STAGE, dplyr::desc(if ("VERSIONS" %in% colnames(df)) VERSIONS else VERSION))
-    }
-
-    format_table <- function(df, title, is_summary = FALSE) {
-      if (nrow(df) == 0) {
-        cat("\n", title, "\n\n")
-        headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
-        header_line <- paste(format(headers, justify = "centre"), collapse = "   ")
-        separator <- paste(rep(".", nchar(header_line)), collapse = "")
-        cat(header_line, "\n")
-        cat(separator, "\n")
-        cat("(empty)\n")
-        return(invisible(NULL))
-      }
-
-      df <- as.data.frame(df)
-      name_chr <- as.character(df$NAME)
-      stage_chr <- as.character(df$STAGE)
-      date_chr <- as.character(df$DATE)
-
-      # Evitar error si hay NAs en date_chr
-      date_chr_clean <- date_chr[!is.na(date_chr)]
-      width_date <- if (length(date_chr_clean) > 0) max(nchar(date_chr_clean)) else 10
-      date <- format(date_chr, width = width_date, justify = "centre")
-
-      name <- format(name_chr, width = max(nchar(name_chr)), justify = "left")
-      stage <- format(stage_chr, width = max(nchar(stage_chr)), justify = "left")
-
-      if (is_summary) {
-        versions_chr <- as.character(df$VERSIONS)
-        versions <- format(versions_chr, width = max(nchar(versions_chr)), justify = "centre")
-      } else {
-        version_chr <- as.character(df$VERSION)
-        versions <- format(version_chr, width = max(nchar(version_chr)), justify = "centre")
-      }
-
-      widths <- c(
-        max(nchar(name_chr)),
-        max(nchar(stage_chr)),
-        if (is_summary) max(nchar(versions_chr)) else max(nchar(version_chr)),
-        width_date
-      )
-
-      headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
-      headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
-      separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
-      body <- paste(name, stage, versions, date, sep = "   ")
-
-      # Mostrar tabla
-      cat("\n", title, "\n\n")
-      cat(paste(headers_fmt, collapse = "   "), "\n")
-      cat(separator, "\n")
-      cat(paste(body, collapse = "\n"), "\n")
-    }
-
-
-    format_table(sort_table(summary), title = "\n✅ AVAILABLE CHECKPOINTS ✅", is_summary = TRUE)
-    format_table(sort_table(loaded), title = "\n✅ LOADED CHECKPOINTS ✅", is_summary = FALSE)
-
-    invisible(list(
-      available_versions = sort_table(summary),
-      loaded_bases = sort_table(loaded)
-    ))
+    cat(sprintf("\n✅ CHECKPOINT VERSIONS STAGE: %s ✅\n\n", stage))
+    print(version_table, row.names = FALSE)
+    cat("\n💬 COMMENTS ASSOCIATED 💬\n\n")
+    print(comment_table, row.names = FALSE)
+    return(invisible(list(versions_long = version_table, comments = comment_table)))
   }
+
+  # ========== CASO: overview general ========== #
+  summary <- log[!log$IS_TAG, ] %>%
+    dplyr::group_by(NAME, STAGE) %>%
+    dplyr::summarise(
+      VERSIONS = paste(sort(VERSION), collapse = ", "),
+      DATE = format(as.POSIXct(max(DATE_UNIX), origin = "1970-01-01"), "%Y-%m-%d"),
+      .groups = "drop"
+    )
+
+  env_objs <- ls(envir = envir)
+  loaded <- lapply(env_objs, function(obj_name) {
+    obj <- get(obj_name, envir)
+    info <- attr(obj, "checkpoint_info")
+    if (!is.null(info)) {
+      unix_time <- log$DATE_UNIX[log$NAME == info$name & log$STAGE == info$stage & log$VERSION == info$version]
+      tibble::tibble(
+        NAME = obj_name,
+        STAGE = info$stage,
+        VERSION = info$version,
+        DATE = if (length(unix_time) > 0) format(as.POSIXct(unix_time, origin = "1970-01-01"), "%Y-%m-%d") else NA
+      )
+    } else NULL
+  }) %>% dplyr::bind_rows()
+
+  cat("\n✅ AVAILABLE CHECKPOINTS ✅\n\n")
+  print(summary, row.names = FALSE)
+  cat("\n✅ LOADED CHECKPOINTS ✅\n\n")
+  print(loaded, row.names = FALSE)
+
+  # Mostrar último tag si existe
+  tags <- log[log$IS_TAG, ]
+  if (nrow(tags) > 0) {
+    tags <- tags[order(-tags$DATE_UNIX), ]
+    last_tag <- tags[1, ]
+    checks <- log[!log$IS_TAG & log$TAG == last_tag$TAG, ]
+    stage_summary <- as.data.frame(table(checks$STAGE))
+    names(stage_summary) <- c("STAGE", "CHECKS")
+    cat("\n🏷️  LAST TAG SUMMARY 🏷️\n\n")
+    cat(paste("TAG:", last_tag$TAG, "\n"))
+    cat(paste("DATE:", last_tag$DATE, "\n"))
+    cat("\n")
+    print(stage_summary, row.names = FALSE)
+    if (last_tag$COMMENT != "") cat("\n💬", last_tag$COMMENT, "\n")
+  }
+
+  invisible(list(
+    available_versions = summary,
+    loaded_bases = loaded,
+    last_tag_info = if (exists("last_tag")) last_tag else NULL
+  ))
 }
+
 
 #' Display attributes of checkpointed objects
 #'
@@ -771,9 +741,6 @@ check_tag <- function(tag, comment = "") {
   invisible(tag_row)
 }
 
-
-
-
 #' Show registered checkpoint tags
 #'
 #' Displays information from the tags log (`tags_log.xlsx`) including summaries, specific tags, or the latest tag.
@@ -944,4 +911,434 @@ upgrade_log_format <- function(log_df) {
     log_df$IS_TAG <- FALSE
   }
   return(log_df)
+}
+
+
+check_overview1 <- function(envir = .GlobalEnv) {
+  log_path <- file.path("4_checkpoint", "log.xlsx")
+  if (!file.exists(log_path)) stop("❌ Checkpoint log file does not exist.")
+
+  log <- openxlsx::read.xlsx(log_path)
+  log <- upgrade_log_format(log)
+  log <- log[file.exists(file.path("4_checkpoint", log$FILE)), ]
+
+  if (nrow(log) == 0) {
+    message("⚠️ No valid checkpoint records found with existing files.")
+    return(NULL)
+  }
+
+  # Tabla resumida de checkpoints disponibles
+  summary <- log %>%
+    dplyr::filter(!IS_TAG) %>%
+    dplyr::group_by(NAME, STAGE) %>%
+    dplyr::summarise(
+      VERSIONS = paste(sort(VERSION), collapse = ", "),
+      DATE = format(as.POSIXct(max(DATE_UNIX), origin = "1970-01-01"), "%Y-%m-%d"),
+      .groups = "drop"
+    )
+
+  # Objetos cargados
+  env_objs <- ls(envir = envir)
+  loaded <- lapply(env_objs, function(obj_name) {
+    obj <- get(obj_name, envir = envir)
+    info <- attr(obj, "checkpoint_info")
+    if (!is.null(info)) {
+      unix_time <- log %>%
+        dplyr::filter(NAME == info$name, STAGE == info$stage, VERSION == info$version) %>%
+        dplyr::pull(DATE_UNIX) %>% dplyr::first()
+
+      tibble::tibble(
+        NAME = obj_name,
+        STAGE = info$stage,
+        VERSION = info$version,
+        DATE = format(as.POSIXct(unix_time, origin = "1970-01-01"), "%Y-%m-%d")
+      )
+    } else {
+      NULL
+    }
+  }) %>% dplyr::bind_rows()
+
+  sort_table <- function(df) {
+    if (!"NAME" %in% colnames(df)) return(df)
+    df %>%
+      dplyr::mutate(NAME = factor(NAME, levels = c("procdata", sort(setdiff(unique(NAME), "procdata"))))) %>%
+      dplyr::arrange(NAME, STAGE, dplyr::desc(if ("VERSIONS" %in% colnames(df)) VERSIONS else VERSION))
+  }
+
+  format_table <- function(df, title, is_summary = FALSE) {
+    if (nrow(df) == 0) {
+      cat("\n", title, "\n\n")
+      headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
+      header_line <- paste(format(headers, justify = "centre"), collapse = "   ")
+      separator <- paste(rep(".", nchar(header_line)), collapse = "")
+      cat(header_line, "\n")
+      cat(separator, "\n")
+      cat("(empty)\n")
+      return(invisible(NULL))
+    }
+
+    df <- as.data.frame(df)
+    name_chr <- as.character(df$NAME)
+    stage_chr <- as.character(df$STAGE)
+    date_chr <- as.character(df$DATE)
+
+    name <- format(name_chr, width = max(nchar(name_chr)), justify = "left")
+    stage <- format(stage_chr, width = max(nchar(stage_chr)), justify = "left")
+    if (is_summary) {
+      versions_chr <- as.character(df$VERSIONS)
+      versions <- format(versions_chr, width = max(nchar(versions_chr)), justify = "centre")
+    } else {
+      version_chr <- as.character(df$VERSION)
+      versions <- format(version_chr, width = max(nchar(version_chr)), justify = "centre")
+    }
+    date_chr_clean <- date_chr[!is.na(date_chr)]
+    width_date <- if (length(date_chr_clean) > 0) max(nchar(date_chr_clean)) else 10
+    date <- format(date_chr, width = width_date, justify = "centre")
+
+    headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
+    headers_fmt <- mapply(format, headers, width = c(nchar(headers[1]), nchar(headers[2]), nchar(headers[3]), width_date), MoreArgs = list(justify = "centre"))
+    separator <- paste(rep(".", sum(nchar(headers_fmt)) + 3 * (length(headers_fmt) - 1)), collapse = "")
+
+    body <- paste(name, stage, versions, date, sep = "   ")
+
+    cat("\n", title, "\n\n")
+    cat(paste(headers_fmt, collapse = "   "), "\n")
+    cat(separator, "\n")
+    cat(paste(body, collapse = "\n"), "\n")
+  }
+
+  format_table(sort_table(summary), title = "\n✅ AVAILABLE CHECKPOINTS ✅", is_summary = TRUE)
+  format_table(sort_table(loaded), title = "\n✅ LOADED CHECKPOINTS ✅", is_summary = FALSE)
+
+  # === AGREGAR ÚLTIMO TAG ===
+  last_tag <- log %>% dplyr::filter(IS_TAG) %>% dplyr::arrange(dplyr::desc(DATE_UNIX)) %>% dplyr::slice(1)
+  if (nrow(last_tag) == 1) {
+    tag_id <- last_tag$TAG
+    tag_comment <- last_tag$COMMENT
+    tag_info <- log %>%
+      dplyr::filter(TAG == tag_id & !IS_TAG) %>%
+      dplyr::count(STAGE, name = "CHECKS") %>%
+      dplyr::arrange(dplyr::desc(CHECKS))
+
+    cat("\n🏷️  LAST TAG CREATED: ", tag_id, "🏷️\n\n")
+    if (nrow(tag_info) > 0) {
+      print(tag_info, row.names = FALSE)
+    } else {
+      cat("(no associated checkpoints)\n")
+    }
+    if (!is.na(tag_comment) && tag_comment != "") {
+      cat("\n💬 ", tag_comment, "\n")
+    }
+  }
+
+  invisible(list(
+    available_versions = sort_table(summary),
+    loaded_bases = sort_table(loaded)
+  ))
+}
+
+last_tag <- function(path = "4_checkpoint/log.xlsx") {
+  if (!file.exists(path)) {
+    stop("❌ Log file not found at: ", path)
+  }
+
+  log <- openxlsx::read.xlsx(path)
+  log <- upgrade_log_format(log)
+  log <- log[log$TAG != "" & !is.na(log$TAG), ]
+
+  if (nrow(log) == 0) {
+    cat("⚠️ No tags found in log.\n")
+    return(invisible(NULL))
+  }
+
+  # Obtener último tag
+  tag_row <- log[log$IS_TAG, ]
+  tag_row <- tag_row[which.max(tag_row$DATE_UNIX), ]
+  tag_id <- tag_row$TAG
+  tag_version <- tag_row$VERSION
+  tag_date <- format(as.POSIXct(tag_row$DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d")
+  tag_comment <- tag_row$COMMENT
+
+  # Filtrar checkpoints vinculados al último tag
+  checks <- log[log$TAG == tag_id & !log$IS_TAG, ]
+
+  # Obtener solo la última versión por combinación STAGE + NAME
+  checks_latest <- checks %>%
+    dplyr::group_by(STAGE, NAME) %>%
+    dplyr::slice_max(DATE_UNIX, n = 1, with_ties = FALSE) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(dplyr::desc(DATE_UNIX))
+
+  # === MOSTRAR ENCABEZADO ===
+  cat(sprintf("\n🏷️  TAG: %s   📁 V%d   📅 %s\n\n", tag_id, tag_version, tag_date))
+
+  # === TABLA PRINCIPAL ===
+  cat("N°   STAGE       CHECKS     VERSION   DATE\n")
+  cat("...................................................\n")
+
+  for (i in seq_len(nrow(checks_latest))) {
+    row <- checks_latest[i, ]
+    fecha <- format(as.POSIXct(row$DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d")
+    cat(sprintf("%-4d %-11s %-10s %-8d %s\n",
+                i, row$STAGE, row$NAME, row$VERSION, fecha))
+  }
+
+  # === COMENTARIOS ===
+  cat("\n💬 TAG & CHECK COMMENTS 💬\n\n")
+  cat("N°   OBJ              COMMENT\n")
+  cat("...........................................\n")
+
+  # Línea para el TAG
+  cat(sprintf("1    🏷️ TAG          %s\n", ifelse(tag_comment != "", tag_comment, "(no comment)")))
+
+  # Comentarios de los checkpoints (últimas versiones)
+  for (i in seq_len(nrow(checks_latest))) {
+    row <- checks_latest[i, ]
+    comment <- ifelse(row$COMMENT == "", "(no comment)", row$COMMENT)
+    cat(sprintf("%-4d %-16s %s\n", i + 1, row$NAME, comment))
+  }
+
+  invisible(checks_latest)
+}
+
+env_tags <- function(envir = .GlobalEnv, path = "4_checkpoint/log.xlsx") {
+  if (!file.exists(path)) {
+    stop("❌ Log file does not exist at: ", path)
+  }
+
+  log <- openxlsx::read.xlsx(path)
+  log <- upgrade_log_format(log)
+
+  env_objs <- ls(envir = envir)
+  checkpoint_objs <- lapply(env_objs, function(obj_name) {
+    obj <- get(obj_name, envir = envir)
+    info <- attr(obj, "checkpoint_info")
+    if (!is.null(info)) {
+      data.frame(NAME = obj_name, STAGE = info$stage, VERSION = info$version, stringsAsFactors = FALSE)
+    } else {
+      NULL
+    }
+  })
+  checkpoint_objs <- do.call(rbind, checkpoint_objs)
+
+  if (is.null(checkpoint_objs) || nrow(checkpoint_objs) == 0) {
+    cat("\n⚠️ No loaded checkpoints with metadata found.\n")
+    return(invisible(NULL))
+  }
+
+  tag_matches <- merge(checkpoint_objs, log, by = c("NAME", "STAGE", "VERSION"))
+  tag_matches <- tag_matches[!is.na(tag_matches$TAG) & tag_matches$TAG != "", ]
+
+  if (nrow(tag_matches) == 0) {
+    cat("\n⚠️ No tags associated with currently loaded checkpoints.\n")
+    return(invisible(NULL))
+  }
+
+  # Obtener info real de cada TAG
+  tag_info <- log %>%
+    dplyr::filter(IS_TAG) %>%
+    dplyr::select(TAG, VERSION, DATE_UNIX, COMMENT)
+
+  tag_summary <- tag_matches %>%
+    dplyr::group_by(TAG) %>%
+    dplyr::summarise(
+      STAGES = dplyr::n_distinct(STAGE),
+      CHECKS = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::left_join(tag_info, by = "TAG") %>%
+    dplyr::arrange(dplyr::desc(VERSION)) %>%
+    dplyr::mutate(
+      N = dplyr::row_number(),
+      DATE = format(as.POSIXct(DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d")
+    ) %>%
+    dplyr::select(N, TAG, VERSION, STAGES, CHECKS, DATE, COMMENT)
+
+  # Mostrar tabla
+  cat("\n✅ TAGS OF LOADED CHECKPOINTS ✅\n\n")
+  headers <- c("N°", "TAG", "VERSION", "STAGES", "CHECKS", "DATE")
+  widths <- sapply(headers, nchar)
+  widths["TAG"] <- max(widths["TAG"], max(nchar(tag_summary$TAG)))
+  widths["DATE"] <- max(widths["DATE"], nchar(as.character(tag_summary$DATE)))
+
+  header_line <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+  cat(paste(header_line, collapse = "   "), "\n")
+  cat(paste(rep(".", sum(widths) + 3 * (length(widths) - 1)), collapse = ""), "\n")
+
+  for (i in seq_len(nrow(tag_summary))) {
+    row <- tag_summary[i, ]
+    cat(sprintf(
+      "%*d   %-*s   %*d   %*d   %*d   %-*s\n",
+      widths["N°"], row$N,
+      widths["TAG"], row$TAG,
+      widths["VERSION"], row$VERSION,
+      widths["STAGES"], row$STAGES,
+      widths["CHECKS"], row$CHECKS,
+      widths["DATE"], row$DATE
+    ))
+  }
+
+  # Comentarios
+  cat("\n💬 TAG COMMENTS 💬\n\n")
+  comment_headers <- c("N°", "COMMENT")
+  comment_widths <- c(
+    max(nchar(as.character(tag_summary$N)), nchar("N°")),
+    max(nchar(as.character(tag_summary$COMMENT)), nchar("COMMENT"))
+  )
+
+  cat(sprintf("%-*s   %-*s\n", comment_widths[1], "N°", comment_widths[2], "COMMENT"))
+  cat(paste(rep(".", sum(comment_widths) + 3), collapse = ""), "\n")
+
+  for (i in seq_len(nrow(tag_summary))) {
+    cat(sprintf("%-*d   %-*s\n", comment_widths[1], tag_summary$N[i], comment_widths[2], tag_summary$COMMENT[i]))
+  }
+
+  invisible(tag_summary)
+}
+
+hist_tag <- function(path = "4_checkpoint/log.xlsx", n = 5) {
+  if (!file.exists(path)) {
+    stop("❌ Log file does not exist at: ", path)
+  }
+
+  log <- openxlsx::read.xlsx(path)
+  log <- upgrade_log_format(log)
+
+  tag_rows <- log[log$IS_TAG == TRUE, ]
+  if (nrow(tag_rows) == 0) {
+    cat("\n⚠️ No tags found in log.\n")
+    return(invisible(NULL))
+  }
+
+  tag_rows <- tag_rows[order(-tag_rows$DATE_UNIX), ]
+  tag_rows <- head(tag_rows, n)
+
+  # Resumen por tag
+  tag_summary <- lapply(tag_rows$TAG, function(tag) {
+    checks <- log[log$TAG == tag & !log$IS_TAG, ]
+    data.frame(
+      TAG = tag,
+      VERSION = tag_rows$VERSION[tag_rows$TAG == tag],
+      STAGES = length(unique(checks$STAGE)),
+      CHECKS = nrow(checks),
+      DATE = format(as.POSIXct(tag_rows$DATE_UNIX[tag_rows$TAG == tag], origin = "1970-01-01"), "%Y-%m-%d"),
+      COMMENT = tag_rows$COMMENT[tag_rows$TAG == tag],
+      stringsAsFactors = FALSE
+    )
+  }) |> dplyr::bind_rows()
+
+  # Mostrar tabla
+  cat("\n📌 LAST CREATED TAGS (up to", n, ") 📌\n\n")
+  headers <- c("N°", "TAG", "VERSION", "STAGES", "CHECKS", "DATE")
+  widths <- sapply(headers, nchar)
+  widths["TAG"] <- max(widths["TAG"], max(nchar(tag_summary$TAG)))
+  widths["VERSION"] <- max(widths["VERSION"], max(nchar(as.character(tag_summary$VERSION))))
+  widths["DATE"] <- max(widths["DATE"], max(nchar(tag_summary$DATE)))
+
+  # Header
+  header_line <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+  cat(paste(header_line, collapse = "   "), "\n")
+  cat(paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = ""), "\n")
+
+  for (i in seq_len(nrow(tag_summary))) {
+    row <- tag_summary[i, ]
+    line <- sprintf(
+      "%*d   %-*s   %*d   %*d   %*d   %-*s",
+      widths["N°"], i,
+      widths["TAG"], row$TAG,
+      widths["VERSION"], row$VERSION,
+      widths["STAGES"], row$STAGES,
+      widths["CHECKS"], row$CHECKS,
+      widths["DATE"], row$DATE
+    )
+    cat(line, "\n")
+  }
+
+  # Comentarios
+  cat("\n💬 TAG COMMENTS 💬\n\n")
+  comment_headers <- c("N°", "COMMENT")
+  comment_widths <- c(
+    max(nchar(as.character(seq_len(nrow(tag_summary)))), nchar("N°")),
+    max(nchar(as.character(tag_summary$COMMENT)), nchar("COMMENT"))
+  )
+
+  cat(sprintf("%-*s   %-*s\n", comment_widths[1], "N°", comment_widths[2], "COMMENT"))
+  cat(paste(rep(".", sum(comment_widths) + 3), collapse = ""), "\n")
+
+  for (i in seq_len(nrow(tag_summary))) {
+    cat(sprintf("%-*d   %-*s\n", comment_widths[1], i, comment_widths[2], tag_summary$COMMENT[i]))
+  }
+
+  invisible(tag_summary)
+}
+
+search_tag <- function(stage, path = "4_checkpoint/log.xlsx") {
+  if (!file.exists(path)) {
+    stop("❌ Log file does not exist at: ", path)
+  }
+
+  log <- openxlsx::read.xlsx(path)
+  log <- upgrade_log_format(log)
+
+  log_stage <- log[log$STAGE == stage & !log$IS_TAG, ]
+  if (nrow(log_stage) == 0) {
+    cat("\n⚠️ No checkpoints found for stage: ", stage, "\n")
+    return(invisible(NULL))
+  }
+
+  latest <- log_stage[which.max(log_stage$DATE_UNIX), ]
+  tag <- latest$TAG
+
+  if (is.na(tag) || tag == "") {
+    cat(sprintf("\n⚠️ Last version of stage '%s' is not tagged.\n", stage))
+    return(invisible(NULL))
+  }
+
+  tag_row <- log[log$IS_TAG & log$TAG == tag, ]
+  if (nrow(tag_row) == 0) {
+    cat(sprintf("\n⚠️ Tag '%s' not found as a tag row in log.\n", tag))
+    return(invisible(NULL))
+  }
+
+  # Buscar todos los checkpoints asociados a este tag
+  checks <- log[log$TAG == tag & !log$IS_TAG, ]
+
+  # Construir tabla
+  result <- data.frame(
+    TAG = tag,
+    VERSION = tag_row$VERSION,
+    STAGES = length(unique(checks$STAGE)),
+    CHECKS = nrow(checks),
+    DATE = format(as.POSIXct(tag_row$DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d"),
+    COMMENT = tag_row$COMMENT,
+    stringsAsFactors = FALSE
+  )
+
+  # Mostrar tabla
+  cat(sprintf("\n🔍 LAST TAG FOR STAGE '%s' 🔍\n\n", stage))
+  headers <- c("TAG", "VERSION", "STAGES", "CHECKS", "DATE")
+  widths <- sapply(headers, nchar)
+  widths["TAG"] <- max(widths["TAG"], nchar(result$TAG))
+  widths["DATE"] <- max(widths["DATE"], nchar(result$DATE))
+
+  # Header
+  header_line <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+  cat(paste(header_line, collapse = "   "), "\n")
+  cat(paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = ""), "\n")
+
+  line <- sprintf(
+    "%-*s   %*d   %*d   %*d   %-*s",
+    widths["TAG"], result$TAG,
+    widths["VERSION"], result$VERSION,
+    widths["STAGES"], result$STAGES,
+    widths["CHECKS"], result$CHECKS,
+    widths["DATE"], result$DATE
+  )
+  cat(line, "\n")
+
+  # Comentario
+  cat("\n💬 TAG COMMENT 💬\n\n")
+  cat(sprintf("COMMENT: %s\n", result$COMMENT))
+
+  invisible(result)
 }
