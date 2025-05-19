@@ -1087,13 +1087,13 @@ last_tag <- function(path = "4_checkpoint/log.xlsx") {
   cat("...........................................\n")
 
   # Línea para el TAG
-  cat(sprintf("1    🏷️️ TAG          %s\n", ifelse(tag_comment != "", tag_comment, "(no comment)")))
+  cat(sprintf("%-4s %-16s %s\n", "🏷️️", "  TAG", ifelse(tag_comment != "", tag_comment, "(no comment)")))
 
   # Comentarios de los checkpoints (últimas versiones)
   for (i in seq_len(nrow(checks_latest))) {
     row <- checks_latest[i, ]
     comment <- ifelse(row$COMMENT == "", "(no comment)", row$COMMENT)
-    cat(sprintf("%-4d %-16s %s\n", i + 1, row$NAME, comment))
+    cat(sprintf("%-4d %-16s %s\n", i, row$NAME, comment))
   }
 
   invisible(checks_latest)
@@ -1375,9 +1375,9 @@ search_com <- function(stage, path = "4_checkpoint/log.xlsx") {
 
   # Construir tabla de comentarios
   all_comments <- rbind(
-    data.frame(N = 1, OBJ = "🏷️️ TAG", COMMENT = tag_comment, stringsAsFactors = FALSE),
+    data.frame(N = "🏷️️", OBJ = "️️ TAG", COMMENT = tag_comment, stringsAsFactors = FALSE),
     data.frame(
-      N = 2:(nrow(checks) + 1),
+      N = seq(nrow(checks)),
       OBJ = checks$NAME,
       COMMENT = ifelse(checks$COMMENT == "", "(no comment)", checks$COMMENT),
       stringsAsFactors = FALSE
@@ -1526,8 +1526,8 @@ ov2 <- function(stage) {
   log_stage <- log_stage[order(-log_stage$VERSION), ]
   df_main <- data.frame(
     N = seq_len(nrow(log_stage)),
-    VERSIONS = log_stage$VERSION,
     NAME = log_stage$NAME,
+    VERSIONS = log_stage$VERSION,
     DATE = format(as.POSIXct(log_stage$DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d %H:%M:%S"),
     stringsAsFactors = FALSE
   )
