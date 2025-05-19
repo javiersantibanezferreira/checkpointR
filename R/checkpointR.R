@@ -223,7 +223,6 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
   invisible(NULL)
 }
 
-
 #' Show an overview of available and loaded checkpoints
 #'
 #' @param stage Optional character vector. If provided, filters by stage(s).
@@ -873,7 +872,9 @@ parse_id <- function(ID) {
   return(list(tag = tag, stage = stage, name = name, version = version))
 }
 
-normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL, comment = NULL, obj = NULL, ID = NULL) {
+normalize_args <- function(stage = NULL, name = NULL, version = NULL,
+                           tag = NULL, comment = NULL, obj = NULL,
+                           ID = NULL) {
   if (!is.null(ID)) {
     parsed <- parse_id(ID)
     tag <- parsed$tag
@@ -902,7 +903,6 @@ normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL
   ))
 }
 
-
 upgrade_log_format <- function(log_df) {
   if (!"ID" %in% names(log_df)) {
     log_df$ID <- mapply(generate_id, log_df$stage, log_df$name, log_df$version, MoreArgs = list(tag = NULL))
@@ -912,7 +912,6 @@ upgrade_log_format <- function(log_df) {
   }
   return(log_df)
 }
-
 
 check_overview1 <- function(envir = .GlobalEnv) {
   log_path <- file.path("4_checkpoint", "log.xlsx")
