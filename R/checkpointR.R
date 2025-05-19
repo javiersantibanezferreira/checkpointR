@@ -1402,7 +1402,6 @@ search_com <- function(stage, path = "4_checkpoint/log.xlsx") {
   invisible(all_comments)
 }
 
-
 ov1 <- function(envir = .GlobalEnv) {
   log_path <- file.path("4_checkpoint", "log.xlsx")
   if (!file.exists(log_path)) stop("❌ Log file does not exist.")
@@ -1578,4 +1577,14 @@ ov3 <- function(path = "4_checkpoint/log.xlsx", envir = .GlobalEnv) {
   hist_tag(path = path)
 
   invisible(NULL)
+}
+
+check_overview1 <- function(stage = NULL, envir = .GlobalEnv) {
+  if (is.null(stage)) {
+    ov1(envir = envir)
+  } else if (toupper(stage) == "TAGS") {
+    ov3()
+  } else {
+    ov2(stage = stage)
+  }
 }
