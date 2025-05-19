@@ -20,6 +20,7 @@ NULL
 #' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
 #' @export
 check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
+  if (missing(name)) name <- deparse(substitute(obj))
   args <- normalize_args(stage = stage, name = name, comment = comment, obj = obj)
   if (toupper(args$stage) == "TAG") {
     stop("❌ 'TAG' cannot be used as a stage name. It is reserved for visual formatting.")
@@ -172,7 +173,7 @@ check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
 #' @export
 check_load <- function(stage, name = "procdata", version = NULL, folder = "4_checkpoint",
                        envir = .GlobalEnv, quiet = FALSE) {
-
+  if (stage == "TAG") stop("❌ Stage name 'TAG' is reserved and cannot be used.")
   stage_folder <- file.path(folder, stage)
   log_path <- file.path(folder, "log.xlsx")
 
@@ -181,7 +182,9 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
   }
 
   log <- openxlsx::read.xlsx(log_path)
-  filtered_log <- log[log$STAGE == stage & log$NAME == name, ]
+  log <- upgrade_log_format(log)
+
+  filtered_log <- log[log$STAGE == stage & log$NAME == name & log$IS_TAG == FALSE, ]
 
   if (nrow(filtered_log) == 0) {
     stop(sprintf("❌ No checkpoints found for stage '%s' and name '%s'.", stage, name))
@@ -211,14 +214,13 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
     version = version
   )
 
-  assign(name, obj, envir = envir)
-
   if (!quiet) {
     message(sprintf("✅ Loaded checkpoint: [%s] %s v%d", stage, name, version))
   }
 
-  invisible(NULL)
+  return(obj)
 }
+
 
 #' Show an overview of available and loaded checkpoints
 #'
@@ -357,6 +359,11 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
       stage_chr <- as.character(df$STAGE)
       date_chr <- as.character(df$DATE)
 
+      # Evitar error si hay NAs en date_chr
+      date_chr_clean <- date_chr[!is.na(date_chr)]
+      width_date <- if (length(date_chr_clean) > 0) max(nchar(date_chr_clean)) else 10
+      date <- format(date_chr, width = width_date, justify = "centre")
+
       name <- format(name_chr, width = max(nchar(name_chr)), justify = "left")
       stage <- format(stage_chr, width = max(nchar(stage_chr)), justify = "left")
 
@@ -368,14 +375,11 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
         versions <- format(version_chr, width = max(nchar(version_chr)), justify = "centre")
       }
 
-      date <- format(date_chr, width = max(nchar(date_chr)), justify = "centre")
-
-      # Anchura por columna para encabezado
       widths <- c(
         max(nchar(name_chr)),
         max(nchar(stage_chr)),
         if (is_summary) max(nchar(versions_chr)) else max(nchar(version_chr)),
-        max(nchar(date_chr))
+        width_date
       )
 
       headers <- c("NAME", "STAGE", if (is_summary) "VERSIONS" else "VERSION", "DATE")
@@ -389,6 +393,7 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
       cat(separator, "\n")
       cat(paste(body, collapse = "\n"), "\n")
     }
+
 
     format_table(sort_table(summary), title = "\n✅ AVAILABLE CHECKPOINTS ✅", is_summary = TRUE)
     format_table(sort_table(loaded), title = "\n✅ LOADED CHECKPOINTS ✅", is_summary = FALSE)
@@ -902,19 +907,6 @@ parse_id <- function(ID) {
 }
 
 normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL, comment = NULL, obj = NULL, ID = NULL) {
-  # Caso especial: sólo se entrega tag, se permite para tags globales
-  if (is.null(stage) && is.null(ID) && !is.null(tag)) {
-    return(list(
-      stage = NULL,
-      name = NULL,
-      version = NULL,
-      tag = tag,
-      comment = comment,
-      obj = NULL,
-      ID = NULL
-    ))
-  }
-
   if (!is.null(ID)) {
     parsed <- parse_id(ID)
     tag <- parsed$tag
@@ -923,25 +915,11 @@ normalize_args <- function(stage = NULL, name = NULL, version = NULL, tag = NULL
     version <- parsed$version
   }
 
-  if (is.null(stage) && is.null(ID)) {
-    stop("❌ Either 'stage', 'ID', or a global 'tag' must be provided.")
-  }
+  if (is.null(stage)) stop("❌ 'stage' is required.")
 
+  # Si obj no fue entregado explícitamente, usar procdata
   if (missing(obj)) obj <- procdata
   if (is.null(obj)) obj <- procdata
-
-  if (is.null(name)) {
-    name <- if (!missing(obj)) deparse(substitute(obj)) else "procdata"
-  }
-
-  if (!is.null(ID) && is.null(obj)) {
-    if (!exists(name, envir = .GlobalEnv)) {
-      stop(sprintf("❌ Object '%s' specified in ID does not exist in the environment. Provide it with `obj = ...`.", name))
-    } else {
-      obj <- get(name, envir = .GlobalEnv)
-    }
-  }
-
   if (is.null(ID)) {
     ID <- generate_id(stage, name, version, tag)
   }
