@@ -19,9 +19,11 @@ NULL
 #'
 #' @return Invisible NULL. Side effect: saves an .rds file and updates the log.
 #' @export
-check_save <- function(obj = procdata, name = NULL, stage, comment = NULL) {
+check_save <- function(stage, obj = procdata, name = NULL, comment = NULL) {
   args <- normalize_args(stage = stage, name = name, comment = comment, obj = obj)
-
+  if (toupper(args$stage) == "TAG") {
+    stop("❌ 'TAG' cannot be used as a stage name. It is reserved for visual formatting.")
+  }
   folder <- "4_checkpoint"
   if (!dir.exists(folder)) dir.create(folder)
 
@@ -29,11 +31,7 @@ check_save <- function(obj = procdata, name = NULL, stage, comment = NULL) {
 
   if (file.exists(log_path)) {
     log_df <- openxlsx::read.xlsx(log_path)
-    # Asegurar columnas obligatorias en orden correcto
-    if (!"TAG" %in% names(log_df)) log_df$TAG <- ""
-    if (!"IS_TAG" %in% names(log_df)) log_df$IS_TAG <- FALSE
-    if (!"ID" %in% names(log_df)) log_df$ID <- mapply(generate_id, log_df$STAGE, log_df$NAME, log_df$VERSION)
-    log_df <- log_df[, c("TAG", "STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")]
+    log_df <- upgrade_log_format(log_df)
   } else {
     log_df <- data.frame(
       TAG = character(),
@@ -48,7 +46,6 @@ check_save <- function(obj = procdata, name = NULL, stage, comment = NULL) {
       IS_TAG = logical(),
       stringsAsFactors = FALSE
     )
-
   }
 
   subset_versions <- log_df[log_df$STAGE == args$stage & log_df$NAME == args$name & log_df$IS_TAG == FALSE, ]
@@ -80,57 +77,87 @@ check_save <- function(obj = procdata, name = NULL, stage, comment = NULL) {
 
   log_df <- rbind(log_df, new_row)
 
-  # === FORMATO EXCEL ===
+  # === ESTILO EXCEL ===
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
 
-  header_style <- openxlsx::createStyle(textDecoration = "bold", halign = "center", fgFill = "#DCE6F1")
-  openxlsx::writeData(wb, "log", log_df, headerStyle = header_style)
+  # Estilos
+  style_center <- openxlsx::createStyle(halign = "center")
+  style_nowrap <- openxlsx::createStyle(wrapText = FALSE)
+  style_border <- openxlsx::createStyle(border = "bottom", borderColour = "black")
+  style_header_full <- openxlsx::createStyle(
+    textDecoration = "bold",
+    halign = "center",
+    fgFill = "#84b6f4",
+    border = "bottom",
+    borderColour = "black"
+  )
 
-  border_style <- openxlsx::createStyle(border = "bottom", borderColour = "black")
-  openxlsx::addStyle(wb, "log", style = border_style, rows = 1, cols = 1:ncol(log_df), gridExpand = TRUE)
 
-  gray <- "#F2F2F2"
-  white <- "#FFFFFF"
-  unique_stages <- unique(log_df$STAGE)
-  for (i in seq_along(unique_stages)) {
-    rows <- which(log_df$STAGE == unique_stages[i]) + 1
-    fill_color <- if ((i %% 2) == 1) white else gray
-    fill_style <- openxlsx::createStyle(fgFill = fill_color)
-    openxlsx::addStyle(wb, "log", style = fill_style, rows = rows, cols = 1:ncol(log_df), gridExpand = TRUE)
+  style_gray <- openxlsx::createStyle(fgFill = "#F2F2F2")
+  style_white <- openxlsx::createStyle(fgFill = "#FFFFFF")
 
-    last_row <- max(rows)
-    openxlsx::addStyle(wb, "log", style = border_style, rows = last_row, cols = 1:ncol(log_df), gridExpand = TRUE, stack = TRUE)
+  style_tag_row <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#C6EFCE")  # verde pastel
+  style_tag_stage <- openxlsx::createStyle(fontColour = "#FF0000", textDecoration = "bold") # rojo
+  style_tag_version <- openxlsx::createStyle(fontColour = "#FF0000", halign = "center")     # rojo centrado
+  style_tag_border <- openxlsx::createStyle(border = "topBottom", borderColour = "black")
+
+  cols_order <- c("TAG", "STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")
+  log_df <- log_df[, cols_order]
+  log_df <- log_df[order(-log_df$DATE_UNIX), ]
+
+  openxlsx::writeData(wb, "log", log_df, headerStyle = style_header_full)
+
+  # Ocultar columnas
+  hidden_cols <- which(names(log_df) %in% c("FILE", "DATE_UNIX", "IS_TAG"))
+  for (col in hidden_cols) {
+    openxlsx::setColWidths(wb, "log", cols = col, widths = 0, hidden = TRUE)
   }
 
-  # Alineación y ancho
-  center_style <- openxlsx::createStyle(halign = "center")
-  nowrap_style <- openxlsx::createStyle(wrapText = FALSE)
-  openxlsx::addStyle(wb, "log", center_style, cols = which(names(log_df) %in% c("VERSION", "DATE")), rows = 2:(nrow(log_df)+1), gridExpand = TRUE)
-  openxlsx::addStyle(wb, "log", nowrap_style, cols = which(names(log_df) == "FILE"), rows = 2:(nrow(log_df)+1), gridExpand = TRUE)
+  # Estética general por filas
+  for (i in 1:nrow(log_df)) {
+    row_index <- i + 1
+    is_tag <- log_df$IS_TAG[i]
 
-  # Anchos automáticos y ajustes especiales
-  visible_cols <- setdiff(names(log_df), c("DATE_UNIX", "IS_TAG"))
-  for (col in visible_cols) {
-    idx <- which(names(log_df) == col)
-    width <- if (col == "FILE") max(nchar("FILE")) else "auto"
-    openxlsx::setColWidths(wb, "log", cols = idx, widths = width)
+    if (is_tag) {
+      # Estilo fila tag
+      openxlsx::addStyle(wb, "log", style_tag_row, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_stage, rows = row_index, cols = which(names(log_df) == "STAGE"), stack = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_version, rows = row_index, cols = which(names(log_df) == "VERSION"), stack = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_border, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE, stack = TRUE)
+
+    } else {
+      # Intercalado por tag
+      tag_val <- log_df$TAG[i]
+      idx_in_tag <- which(log_df$TAG == tag_val & !log_df$IS_TAG)
+      rank <- which(idx_in_tag == i)
+      if (length(rank) > 0) {
+        fill <- if ((rank %% 2) == 0) style_gray else style_white
+        openxlsx::addStyle(wb, "log", fill, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE)
+      }
+    }
   }
 
-  # Ocultar columnas DATE_UNIX e IS_TAG
-  for (col in c("DATE_UNIX", "IS_TAG")) {
-    idx <- which(names(log_df) == col)
-    openxlsx::setColWidths(wb, "log", cols = idx, widths = 0, hidden = TRUE)
+  # Centrado y ancho de VERSION
+  version_col <- which(names(log_df) == "VERSION")
+  header_width <- nchar("VERSION")
+  value_width <- max(nchar(as.character(log_df$VERSION)), na.rm = TRUE)
+  max_width <- max(header_width, value_width) + 2
+  openxlsx::addStyle(wb, "log", style_center, cols = version_col, rows = 2:(nrow(log_df) + 1), gridExpand = TRUE, stack = TRUE)
+  openxlsx::setColWidths(wb, "log", cols = version_col, widths = max_width)
+
+  # Ajustar el resto de columnas visibles
+  visible_cols <- setdiff(names(log_df), c("DATE_UNIX", "IS_TAG", "VERSION", "FILE"))
+  for (colname in visible_cols) {
+    idx <- which(names(log_df) == colname)
+    openxlsx::setColWidths(wb, "log", cols = idx, widths = "auto")
   }
 
+  # Guardar workbook
   openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
-
   message(sprintf("🏷️  Checkpoint saved: [%s] %s v%d → %s", args$stage, args$name, version, file.path(args$stage, file_name)))
   invisible(NULL)
 }
-
-
-
 
 #' Load a saved checkpoint object from a given stage and version
 #'
@@ -636,46 +663,106 @@ check_tag <- function(tag, comment = "") {
   }
 
   folder <- "4_checkpoint"
-  if (!dir.exists(folder)) stop("❌ Folder '4_checkpoint' not found.")
+  if (!dir.exists(folder)) dir.create(folder)
   log_path <- file.path(folder, "log.xlsx")
 
   if (!file.exists(log_path)) stop("❌ Cannot tag: log.xlsx not found.")
-  log <- openxlsx::read.xlsx(log_path)
-  log <- upgrade_log_format(log)
+  log_df <- openxlsx::read.xlsx(log_path)
+  log_df <- upgrade_log_format(log_df)
 
   now <- Sys.time()
   now_unix <- as.numeric(now)
 
-  # Obtener último tag anterior
-  last_tag_time <- max(c(0, log$DATE_UNIX[log$IS_TAG]), na.rm = TRUE)
+  # Último tag previo (si existe)
+  last_tag_time <- max(c(0, log_df$DATE_UNIX[log_df$IS_TAG]), na.rm = TRUE)
 
-  # Identificar checkpoints no taggeados previos
-  to_tag <- which(!log$IS_TAG & (is.na(log$TAG) | log$TAG == "") & log$DATE_UNIX > last_tag_time & log$DATE_UNIX <= now_unix)
+  # Identificar checkpoints sin tag y posteriores al último tag
+  eligible_rows <- which(!log_df$IS_TAG & (is.na(log_df$TAG) | log_df$TAG == "") & log_df$DATE_UNIX > last_tag_time)
+  log_df$TAG[eligible_rows] <- tag
 
-  # Aplicar tag
-  log$TAG[to_tag] <- tag
-
-  # Crear fila para marcar tag
+  # Crear fila nueva de tag
   tag_row <- data.frame(
-    STAGE = "(tag)", NAME = "", VERSION = NA,
+    TAG = tag,
+    STAGE = "TAG",
+    NAME = "--",
+    VERSION = length(which(log_df$IS_TAG)) + 1,
     DATE = format(now, "%Y-%m-%d %H:%M:%S"),
     COMMENT = comment,
-    ID = generate_id(stage = "(tag)", name = "", tag = tag),
+    ID = paste0("tag:", tag),
     FILE = NA,
     DATE_UNIX = now_unix,
     IS_TAG = TRUE,
-    TAG = tag,
     stringsAsFactors = FALSE
   )
 
-  # Añadir tag al log y guardar
-  log <- rbind(log, tag_row)
+  log_df <- rbind(log_df, tag_row)
+
+  # === ESTILO EXCEL ===
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "log")
-  openxlsx::writeData(wb, "log", log)
-  openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
 
-  message(sprintf("🏷️  Tag '%s' saved and applied to %d checkpoint(s).", tag, length(to_tag)))
+  # Estilos
+  style_header <- openxlsx::createStyle(textDecoration = "bold", halign = "center", fgFill = "#84b6f4", border = "bottom", borderColour = "black")
+  style_center <- openxlsx::createStyle(halign = "center")
+  style_nowrap <- openxlsx::createStyle(wrapText = FALSE)
+  style_border <- openxlsx::createStyle(border = "bottom", borderColour = "black")
+  style_gray <- openxlsx::createStyle(fgFill = "#F2F2F2")
+  style_white <- openxlsx::createStyle(fgFill = "#FFFFFF")
+  style_tag_stage <- openxlsx::createStyle(fontColour = "#FF0000", textDecoration = "bold")
+  style_tag_version <- openxlsx::createStyle(fontColour = "#FF0000", halign = "center")
+  style_tag_row <- openxlsx::createStyle(textDecoration = "bold", fgFill = "#C6EFCE")
+  style_tag_border <- openxlsx::createStyle(border = "topBottom", borderColour = "black")
+
+  cols_order <- c("TAG", "STAGE", "NAME", "VERSION", "DATE", "COMMENT", "ID", "FILE", "DATE_UNIX", "IS_TAG")
+  log_df <- log_df[, cols_order]
+  log_df <- log_df[order(-log_df$DATE_UNIX), ]
+
+  openxlsx::writeData(wb, "log", log_df, headerStyle = style_header)
+  openxlsx::addStyle(wb, "log", style_header, rows = 1, cols = 1:ncol(log_df), gridExpand = TRUE)
+
+  # Ocultar columnas
+  hidden_cols <- which(names(log_df) %in% c("FILE", "DATE_UNIX", "IS_TAG"))
+  for (col in hidden_cols) {
+    openxlsx::setColWidths(wb, "log", cols = col, widths = 0, hidden = TRUE)
+  }
+
+  for (i in 1:nrow(log_df)) {
+    row_index <- i + 1
+    is_tag <- log_df$IS_TAG[i]
+
+    if (is_tag) {
+      openxlsx::addStyle(wb, "log", style_tag_row, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_stage, rows = row_index, cols = which(names(log_df) == "STAGE"), stack = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_version, rows = row_index, cols = which(names(log_df) == "VERSION"), stack = TRUE)
+      openxlsx::addStyle(wb, "log", style_tag_border, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE, stack = TRUE)
+
+    } else {
+      tag_val <- log_df$TAG[i]
+      idx_in_tag <- which(log_df$TAG == tag_val & !log_df$IS_TAG)
+      rank <- which(idx_in_tag == i)
+      if (length(rank) > 0) {
+        fill <- if ((rank %% 2) == 0) style_gray else style_white
+        openxlsx::addStyle(wb, "log", fill, rows = row_index, cols = 1:ncol(log_df), gridExpand = TRUE)
+      }
+    }
+  }
+
+  # Ajustes de ancho y alineación
+  version_col <- which(names(log_df) == "VERSION")
+  header_width <- nchar("VERSION")
+  value_width <- max(nchar(as.character(log_df$VERSION)), na.rm = TRUE)
+  max_width <- max(header_width, value_width) + 2
+  openxlsx::addStyle(wb, "log", style_center, cols = version_col, rows = 2:(nrow(log_df) + 1), gridExpand = TRUE, stack = TRUE)
+  openxlsx::setColWidths(wb, "log", cols = version_col, widths = max_width)
+
+  visible_cols <- setdiff(names(log_df), c("DATE_UNIX", "IS_TAG", "FILE", "VERSION"))
+  for (colname in visible_cols) {
+    idx <- which(names(log_df) == colname)
+    openxlsx::setColWidths(wb, "log", cols = idx, widths = "auto")
+  }
+
+  openxlsx::saveWorkbook(wb, log_path, overwrite = TRUE)
+  message(sprintf("🏷️  Tag '%s' saved and applied to %d checkpoint(s).", tag, length(eligible_rows)))
   invisible(tag_row)
 }
 
