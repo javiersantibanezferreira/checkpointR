@@ -231,12 +231,13 @@ check_load <- function(stage, name = "procdata", version = NULL, folder = "4_che
 #' @return A list with two tibbles: available_versions and loaded_bases.
 #' @export
 check_overview <- function(stage = NULL, envir = .GlobalEnv) {
+  log <- load_log()
   if (is.null(stage)) {
-    ov1(envir = envir)
+    ov1(log = log, envir = envir)
   } else if (toupper(stage) == "TAGS") {
-    ov3()
+    ov3(log = log)
   } else {
-    ov2(stage = stage)
+    ov2(log = log, stage = stage)
   }
 }
 
@@ -252,6 +253,7 @@ check_overview <- function(stage = NULL, envir = .GlobalEnv) {
 #' @return Invisibly returns NULL. Outputs formatted checkpoint metadata to the console.
 #' @export
 check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
+  log_df <- load_log()
   if (is.null(stage)) {
     loaded <- ls(envir = .GlobalEnv)
     rows <- list()
@@ -259,13 +261,12 @@ check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
     for (name_loaded in loaded) {
       base <- get(name_loaded, envir = .GlobalEnv)
       info <- attr(base, "checkpoint_info")
-      comment <- attr(base, "comment")
+      row_log <- log_df[log_df$STAGE == info$stage & log_df$NAME == info$name &
+                          log_df$VERSION == info$version & !log_df$IS_TAG, ]
 
-      log_path <- file.path("4_checkpoint", "log.xlsx")
-      if (!file.exists(log_path)) {
-        stop("❌ Log file not found.")
-      }
-      log_df <- openxlsx::read.xlsx(log_path)
+      comment <- ifelse(nrow(row_log) == 0 || row_log$COMMENT == "", "(no comment)", row_log$COMMENT)
+      tag <- ifelse(nrow(row_log) == 0 || is.na(row_log$TAG) || row_log$TAG == "", "(no tag)", row_log$TAG)
+
       log_df <- log_df[log_df$STAGE == info$stage & log_df$NAME == info$name & log_df$VERSION == info$version, ]
 
       if (nrow(log_df) > 0) {
@@ -305,7 +306,7 @@ check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
     names(df) <- c("NAME", "STAGE", "VERSION", "DATE", "COMMENT")
 
     cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
-    headers <- c("NAME", "STAGE", "VERSION", "DATE")
+    headers <- c("NAME", "STAGE", "VERSION", "TAG", "DATE")
     widths <- sapply(df[headers], function(col) max(nchar(as.character(col))))
     headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
     separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
@@ -361,7 +362,11 @@ check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
 
   base <- get(name, envir = .GlobalEnv)
   info <- attr(base, "checkpoint_info")
-  comment <- attr(base, "comment")
+  row_log <- log_df[log_df$STAGE == info$stage & log_df$NAME == info$name &
+                      log_df$VERSION == info$version & !log_df$IS_TAG, ]
+
+  comment <- ifelse(nrow(row_log) == 0 || row_log$COMMENT == "", "(no comment)", row_log$COMMENT)
+  tag <- ifelse(nrow(row_log) == 0 || is.na(row_log$TAG) || row_log$TAG == "", "(no tag)", row_log$TAG)
 
   folder <- file.path("4_checkpoint", info$stage)
   file_path <- file.path(folder, sprintf("%s_%s_v%d.rds", info$stage, info$name, info$version))
@@ -374,11 +379,19 @@ check_attr <- function(stage = NULL, name = "procdata", version = NULL) {
   comment_text <- ifelse(is.null(comment) || comment == "", "(no comment)", comment)
 
   cat("\n✅ CHECKPOINT ATTRIBUTES ✅\n\n")
-  cat(sprintf("%-8s | %-7s | %-7s | %s\n", "NAME", "STAGE", "VERSION", "DATE"))
+  cat(sprintf("%-8s | %-7s | %-7s | %s\n", "NAME", "STAGE", "VERSION", "TAG", "DATE"))
   cat("-----------------------------------------------\n")
-  cat(sprintf("%-8s | %-7s | v%-6d | %s\n\n", info$name, info$stage, info$version, date))
+  cat(sprintf("%-8s | %-7s | v%-6d | %s\n\n", info$name, info$stage, info$version, tag, date))
   cat("COMMENT:\n")
   cat(comment_text, "\n")
+  # Comentario del TAG si existe
+  tag_row <- log[log$IS_TAG & log$TAG == tag, ]
+  if (nrow(tag_row) > 0) {
+    tag_comment <- tag_row$COMMENT
+    tag_comment <- ifelse(is.na(tag_comment) || tag_comment == "", "(no comment)", tag_comment)
+    cat("\nTAG COMMENT:\n")
+    cat(tag_comment, "\n")
+  }
 
   invisible(NULL)
 }
@@ -780,13 +793,28 @@ upgrade_log_format <- function(log_df) {
   return(log_df)
 }
 
-last_tag <- function(path = "4_checkpoint/log.xlsx") {
+load_log <- function(path = "4_checkpoint/log.xlsx") {
   if (!file.exists(path)) {
     stop("❌ Log file not found at: ", path)
   }
 
+  # Cargar log
   log <- openxlsx::read.xlsx(path)
+
+  # Verificación mínima
+  required_cols <- c("STAGE", "NAME", "VERSION", "FILE", "DATE_UNIX", "COMMENT", "TAG")
+  missing <- setdiff(required_cols, names(log))
+  if (length(missing) > 0) {
+    stop("❌ Missing required columns in log: ", paste(missing, collapse = ", "))
+  }
+
+  # Normalización
   log <- upgrade_log_format(log)
+
+  return(log)
+}
+
+last_tag <- function(log) {
   log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
   if (nrow(log) == 0) {
@@ -794,7 +822,6 @@ last_tag <- function(path = "4_checkpoint/log.xlsx") {
     return(invisible(NULL))
   }
 
-  # Obtener último tag
   tag_row <- log[log$IS_TAG, ]
   tag_row <- tag_row[which.max(tag_row$DATE_UNIX), ]
   tag_id <- tag_row$TAG
@@ -802,20 +829,14 @@ last_tag <- function(path = "4_checkpoint/log.xlsx") {
   tag_date <- format(as.POSIXct(tag_row$DATE_UNIX, origin = "1970-01-01"), "%Y-%m-%d")
   tag_comment <- tag_row$COMMENT
 
-  # Filtrar checkpoints vinculados al último tag
   checks <- log[log$TAG == tag_id & !log$IS_TAG, ]
-
-  # Obtener solo la última versión por combinación STAGE + NAME
   checks_latest <- checks %>%
     dplyr::group_by(STAGE, NAME) %>%
     dplyr::slice_max(DATE_UNIX, n = 1, with_ties = FALSE) %>%
     dplyr::ungroup() %>%
     dplyr::arrange(dplyr::desc(DATE_UNIX))
 
-  # === MOSTRAR ENCABEZADO ===
   cat(sprintf("\n🏷️️  TAG: %s   📁 V%d   📅 %s\n\n", tag_id, tag_version, tag_date))
-
-  # === TABLA PRINCIPAL ===
   cat("N°   STAGE       CHECKS     VERSION   DATE\n")
   cat("...................................................\n")
 
@@ -826,15 +847,11 @@ last_tag <- function(path = "4_checkpoint/log.xlsx") {
                 i, row$STAGE, row$NAME, row$VERSION, fecha))
   }
 
-  # === COMENTARIOS ===
   cat("\n💬 TAG & CHECK COMMENTS 💬\n\n")
   cat("N°   OBJ              COMMENT\n")
   cat("...........................................\n")
-
-  # Línea para el TAG
   cat(sprintf("%-4s %-16s %s\n", "🏷️️", "  TAG", ifelse(tag_comment != "", tag_comment, "(no comment)")))
 
-  # Comentarios de los checkpoints (últimas versiones)
   for (i in seq_len(nrow(checks_latest))) {
     row <- checks_latest[i, ]
     comment <- ifelse(row$COMMENT == "", "(no comment)", row$COMMENT)
@@ -844,13 +861,9 @@ last_tag <- function(path = "4_checkpoint/log.xlsx") {
   invisible(checks_latest)
 }
 
-env_tags <- function(envir = .GlobalEnv, path = "4_checkpoint/log.xlsx") {
-  if (!file.exists(path)) {
-    stop("❌ Log file does not exist at: ", path)
-  }
+env_tags <- function(log, envir = .GlobalEnv) {
 
-  log <- openxlsx::read.xlsx(path)
-  log <- upgrade_log_format(log)
+  log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
   # Identificar objetos cargados
   env_objs <- ls(envir = envir)
@@ -935,13 +948,9 @@ env_tags <- function(envir = .GlobalEnv, path = "4_checkpoint/log.xlsx") {
   invisible(tag_data)
 }
 
-hist_tag <- function(path = "4_checkpoint/log.xlsx", n = 5) {
-  if (!file.exists(path)) {
-    stop("❌ Log file does not exist at: ", path)
-  }
+hist_tag <- function(log, n = 5) {
 
-  log <- openxlsx::read.xlsx(path)
-  log <- upgrade_log_format(log)
+  log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
   tag_rows <- log[log$IS_TAG == TRUE, ]
   if (nrow(tag_rows) == 0) {
@@ -1011,13 +1020,9 @@ hist_tag <- function(path = "4_checkpoint/log.xlsx", n = 5) {
   invisible(tag_summary)
 }
 
-search_tag <- function(stage, path = "4_checkpoint/log.xlsx") {
-  if (!file.exists(path)) {
-    stop("❌ Log file does not exist at: ", path)
-  }
+search_tag <- function(log, stage) {
 
-  log <- openxlsx::read.xlsx(path)
-  log <- upgrade_log_format(log)
+  log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
   log_stage <- log[log$STAGE == stage & !log$IS_TAG, ]
   if (nrow(log_stage) == 0) {
@@ -1082,11 +1087,9 @@ search_tag <- function(stage, path = "4_checkpoint/log.xlsx") {
   invisible(result)
 }
 
-search_com <- function(stage, path = "4_checkpoint/log.xlsx") {
-  if (!file.exists(path)) stop("❌ Log file not found at: ", path)
+search_com <- function(log, stage) {
 
-  log <- openxlsx::read.xlsx(path)
-  log <- upgrade_log_format(log)
+  log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
   # Filtrar solo saves del stage
   log_stage <- log[log$STAGE == stage & !log$IS_TAG, ]
@@ -1128,6 +1131,7 @@ search_com <- function(stage, path = "4_checkpoint/log.xlsx") {
   # Calcular anchos
   widths <- sapply(all_comments, function(col) max(nchar(as.character(col))))
   widths <- pmax(widths, nchar(c("N", "OBJ", "COMMENT")))
+  names(widths) <- c("N", "OBJ", "COMMENT")  # <- ESTA LÍNEA ES CLAVE
 
   # Imprimir
   cat("\n💬 TAG & STAGE COMMENTS 💬\n\n")
@@ -1143,13 +1147,7 @@ search_com <- function(stage, path = "4_checkpoint/log.xlsx") {
   invisible(all_comments)
 }
 
-ov1 <- function(envir = .GlobalEnv) {
-  log_path <- file.path("4_checkpoint", "log.xlsx")
-  if (!file.exists(log_path)) stop("❌ Log file does not exist.")
-
-  log <- openxlsx::read.xlsx(log_path)
-  log <- upgrade_log_format(log)
-  log <- log[file.exists(file.path("4_checkpoint", log$FILE)), ]
+ov1 <- function(log, envir = .GlobalEnv) {
 
   if (nrow(log) == 0) {
     message("⚠️ No valid checkpoint records found with existing files.")
@@ -1157,7 +1155,7 @@ ov1 <- function(envir = .GlobalEnv) {
   }
 
   # === Mostrar último tag ===
-  last_tag()
+  last_tag(log = log)
 
   # === Generar tabla resumen ===
   summary <- log %>%
@@ -1242,15 +1240,11 @@ ov1 <- function(envir = .GlobalEnv) {
   ))
 }
 
-ov2 <- function(stage) {
-  log_path <- file.path("4_checkpoint", "log.xlsx")
-  if (!file.exists(log_path)) stop("❌ Log file not found.")
-
-  log <- openxlsx::read.xlsx(log_path)
-  log <- upgrade_log_format(log)
+ov2 <- function(log, stage) {
 
   # Filtrar solo saves del stage
   log_stage <- log[log$STAGE == stage & !log$IS_TAG, ]
+
   if (nrow(log_stage) == 0) {
     cat("\n⚠️ No checkpoints found for stage '", stage, "'.\n", sep = "")
     return(invisible(NULL))
@@ -1259,7 +1253,7 @@ ov2 <- function(stage) {
   # ============================
   # 1. Mostrar tag asociado
   # ============================
-  search_tag(stage)
+search_tag(log = log, stage = stage)
 
   # ============================
   # 2. Tabla principal de versiones
@@ -1292,30 +1286,26 @@ ov2 <- function(stage) {
   # ============================
   # 3. Comentarios unificados
   # ============================
-  search_com(stage)
+  search_com(log = log, stage = stage)
 
   invisible(list(
     versions_table = df_main
   ))
 }
 
-ov3 <- function(path = "4_checkpoint/log.xlsx", envir = .GlobalEnv) {
-  if (!file.exists(path)) stop("❌ Log file does not exist.")
-
-  log <- openxlsx::read.xlsx(path)
-  log <- upgrade_log_format(log)
+ov3 <- function(log, envir = .GlobalEnv) {
 
   # 1. Mostrar último tag
   cat("\n\n=== ✅ 1. LAST TAG CREATED ✅ ===\n\n")
-  last_tag(path = path)
+  last_tag(log = log)
 
   # 2. Mostrar tags asociados a objetos cargados
   cat("\n\n=== ✅ 2. TAGS OF LOADED OBJECTS ✅ ===\n\n")
-  env_tags(envir = envir, path = path)
+  env_tags(log = log, envir = envir)
 
   # 3. Historial de los últimos 5 tags
   cat("\n\n=== ✅ 3. TAGS HISTORY (Last 5) ✅ ===\n\n")
-  hist_tag(path = path)
+  hist_tag(log = log)
 
   invisible(NULL)
 }
