@@ -728,6 +728,8 @@ check_tags <- function(stage = NULL, version = NULL) {
   return(invisible(NULL))
 }
 
+# ---- FUNCIONES AUXILIARES GENERALES----
+
 generate_id <- function(stage, name, version = NULL, tag = NULL) {
   id <- paste0(
     if (!is.null(tag)) paste0("tag:", tag, "_") else "",
@@ -814,6 +816,8 @@ load_log <- function(path = "4_checkpoint/log.xlsx") {
   return(log)
 }
 
+# ----  TAG AUXILIARES PARA OVERVIEW ----
+#TAG
 last_tag <- function(log) {
   log <- log[log$TAG != "" & !is.na(log$TAG), ]
 
@@ -1147,6 +1151,8 @@ search_com <- function(log, stage) {
   invisible(all_comments)
 }
 
+#OVERVIEW
+
 ov1 <- function(log, envir = .GlobalEnv) {
 
   if (nrow(log) == 0) {
@@ -1309,3 +1315,112 @@ ov3 <- function(log, envir = .GlobalEnv) {
 
   invisible(NULL)
 }
+
+# ---- ATTR AUXILIARES----
+
+get_log_row <- function(info, log) {
+  id <- if (!is.null(info$ID)) info$ID else generate_id(info$stage, info$name, info$version)
+  row <- log[log$ID == id & !log$IS_TAG, ]
+  if (nrow(row) == 0) return(NULL)
+  return(row[1, ])
+}
+
+get_file_date <- function(stage, name, version) {
+  folder <- file.path("4_checkpoint", stage)
+  file_path <- file.path(folder, sprintf("%s_%s_v%d.rds", stage, name, version))
+  if (file.exists(file_path)) {
+    return(format(file.info(file_path)$ctime, "%Y-%m-%d %H:%M:%S"))
+  } else {
+    return("Date not available")
+  }
+}
+
+get_tag_comment <- function(info, log) {
+  row <- get_log_row(info, log)
+  tag <- if (!is.null(row)) row$TAG else NA
+
+  if (is.na(tag) || tag == "") return("(no tag comment)")
+
+  tag_row <- log[log$IS_TAG & log$TAG == tag, ]
+  if (nrow(tag_row) == 0) return("(no tag comment)")
+
+  comment <- tag_row$COMMENT[1]
+  ifelse(is.na(comment) || comment == "", "(no tag comment)", comment)
+}
+
+build_attr_row <- function(name, info, log) {
+  log_row <- get_log_row(info, log)
+  comment <- if (!is.null(log_row)) {
+    ifelse(is.na(log_row$COMMENT) || log_row$COMMENT == "", "(no comment)", log_row$COMMENT)
+  } else {
+    "(no comment)"
+  }
+
+  tag_comment <- get_tag_comment(info, log)
+  full_comment <- paste0(comment, " | TAG: ", tag_comment)
+
+  list(
+    NAME = name,
+    STAGE = info$stage,
+    VERSION = info$version,
+    DATE = get_file_date(info$stage, info$name, info$version),
+    COMMENT = full_comment
+  )
+}
+
+attr1 <- function(log, envir = .GlobalEnv) {
+  env_objs <- ls(envir = envir)
+  rows <- list()
+
+  for (obj_name in env_objs) {
+    obj <- get(obj_name, envir = envir)
+    info <- attr(obj, "checkpoint_info")
+
+    if (!is.null(info)) {
+      log_row <- get_log_row(info, log)
+      date <- get_file_date(info$stage, info$name, info$version)
+      tag_comment <- get_tag_comment(info, log)
+
+      row <- build_attr_row(info$name, info$stage, info$version, date, log_row$COMMENT, tag_comment)
+      rows[[length(rows) + 1]] <- row
+    }
+  }
+
+  if (length(rows) == 0) {
+    cat("\n❌ No loaded objects with checkpoint information found.\n")
+    return(invisible(NULL))
+  }
+
+  df <- do.call(rbind.data.frame, rows)
+  names(df) <- c("NAME", "STAGE", "VERSION", "DATE", "COMMENT", "TAG_COMMENT")
+
+  # === Imprimir tabla ===
+  cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
+  headers <- c("NAME", "STAGE", "VERSION", "DATE")
+  widths <- sapply(df[headers], function(col) max(nchar(as.character(col))))
+  headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+  separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
+  cat(paste(headers_fmt, collapse = "   "), "\n")
+  cat(separator, "\n")
+
+  for (i in seq_len(nrow(df))) {
+    row <- sapply(seq_along(headers), function(j) {
+      format(df[i, headers[j]], width = widths[j], justify = "left")
+    })
+    cat(paste(row, collapse = "   "), "\n")
+  }
+
+  # === Comentarios ===
+  cat("\nCOMMENTS:\n")
+  for (i in seq_len(nrow(df))) {
+    cat(sprintf("%s v%d: %s | 🏷️ %s\n",
+                df$NAME[i],
+                df$VERSION[i],
+                df$COMMENT[i],
+                ifelse(is.na(df$TAG_COMMENT[i]) || df$TAG_COMMENT[i] == "", "(no tag comment)", df$TAG_COMMENT[i])
+    ))
+  }
+
+  invisible(df)
+}
+
