@@ -1350,77 +1350,126 @@ get_tag_comment <- function(info, log) {
 
 build_attr_row <- function(name, info, log) {
   log_row <- get_log_row(info, log)
-  comment <- if (!is.null(log_row)) {
-    ifelse(is.na(log_row$COMMENT) || log_row$COMMENT == "", "(no comment)", log_row$COMMENT)
-  } else {
-    "(no comment)"
-  }
+  tag <- if (!is.null(log_row)) log_row$TAG else NA
+  tag <- ifelse(is.na(tag) || tag == "", "(no tag)", tag)
 
-  tag_comment <- get_tag_comment(info, log)
-  full_comment <- paste0(comment, " | TAG: ", tag_comment)
 
   list(
     NAME = name,
     STAGE = info$stage,
     VERSION = info$version,
-    DATE = get_file_date(info$stage, info$name, info$version),
-    COMMENT = full_comment
+    DATE = get_file_date(info$stage, name, info$version),
+    TAG = tag
   )
 }
 
-attr1 <- function(log, envir = .GlobalEnv) {
-  env_objs <- ls(envir = envir)
-  rows <- list()
+build_attr_comment <- function(info, log) {
+  log_row <- get_log_row(info, log)
+  comment <- if (!is.null(log_row)) {
+    ifelse(is.na(log_row$COMMENT) || log_row$COMMENT == "", "(no comment)", log_row$COMMENT)
+  } else {
+    "(no comment)"
+  }
+  return(comment)
+}
 
-  for (obj_name in env_objs) {
-    obj <- get(obj_name, envir = envir)
-    info <- attr(obj, "checkpoint_info")
+build_attr_comment_plus <- function(info, log) {
+  obj_comment <- build_attr_comment(info, log)
+  tag_comment <- get_tag_comment(info, log)
+  tag_comment <- ifelse(tag_comment == "" || is.na(tag_comment), "(no tag comment)", tag_comment)
 
-    if (!is.null(info)) {
-      log_row <- get_log_row(info, log)
-      date <- get_file_date(info$stage, info$name, info$version)
-      tag_comment <- get_tag_comment(info, log)
+  paste0(obj_comment, "\n └─ 💬 ", tag_comment)
+}
 
-      row <- build_attr_row(info$name, info$stage, info$version, date, log_row$COMMENT, tag_comment)
-      rows[[length(rows) + 1]] <- row
+print_attr_table <- function(df) {
+  columns <- c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")
+  headers <- c("N", "🏷️ TAG 🏷️", "NAME", "STAGE", "VERSION", "DATE")
+
+  widths <- sapply(columns, function(col) {
+    values <- as.character(df[[col]])
+    if (is.null(values) || all(is.na(values))) {
+      nchar(col)
+    } else {
+      max(nchar(col), max(nchar(values), na.rm = TRUE))
     }
-  }
+  })
 
-  if (length(rows) == 0) {
-    cat("\n❌ No loaded objects with checkpoint information found.\n")
-    return(invisible(NULL))
-  }
 
-  df <- do.call(rbind.data.frame, rows)
-  names(df) <- c("NAME", "STAGE", "VERSION", "DATE", "COMMENT", "TAG_COMMENT")
-
-  # === Imprimir tabla ===
-  cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
-  headers <- c("NAME", "STAGE", "VERSION", "DATE")
-  widths <- sapply(df[headers], function(col) max(nchar(as.character(col))))
-  headers_fmt <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
-  separator <- paste(rep(".", sum(widths) + 3 * (length(headers) - 1)), collapse = "")
-  cat(paste(headers_fmt, collapse = "   "), "\n")
+  header_line <- mapply(format, headers, width = widths, MoreArgs = list(justify = "centre"))
+  separator <- paste(rep(".", sum(widths) + 3 * (length(widths) - 1)), collapse = "")
+  cat(paste(header_line, collapse = "   "), "\n")
   cat(separator, "\n")
 
   for (i in seq_len(nrow(df))) {
-    row <- sapply(seq_along(headers), function(j) {
-      format(df[i, headers[j]], width = widths[j], justify = "left")
-    })
-    cat(paste(row, collapse = "   "), "\n")
+    row <- df[i, ]
+    line <- sprintf(
+      "%*d   %-*s   %-*s   %-*s   %*d   %-*s",
+      widths["N"], row$N,
+      widths["TAG"], row$TAG,
+      widths["NAME"], row$NAME,
+      widths["STAGE"], row$STAGE,
+      widths["VERSION"], row$VERSION,
+      widths["DATE"], row$DATE
+    )
+    cat(line, "\n")
   }
 
-  # === Comentarios ===
-  cat("\nCOMMENTS:\n")
-  for (i in seq_len(nrow(df))) {
-    cat(sprintf("%s v%d: %s | 🏷️ %s\n",
-                df$NAME[i],
-                df$VERSION[i],
-                df$COMMENT[i],
-                ifelse(is.na(df$TAG_COMMENT[i]) || df$TAG_COMMENT[i] == "", "(no tag comment)", df$TAG_COMMENT[i])
-    ))
-  }
-
-  invisible(df)
 }
+
+attr1 <- function(envir = .GlobalEnv) {
+  log <- load_log()
+
+  # Filtrar objetos cargados con metadata
+  env_objs <- ls(envir = envir)
+  loaded <- lapply(env_objs, function(name) {
+    obj <- get(name, envir)
+    info <- attr(obj, "checkpoint_info")
+    if (!is.null(info)) build_attr_row(name, info, log) else NULL
+  })
+  rows <- do.call(rbind, lapply(loaded, as.data.frame))
+  if (is.null(rows) || nrow(rows) == 0) {
+    cat("⚠️ No loaded checkpoints with metadata found.\n")
+    return(invisible(NULL))
+  }
+
+  # Ordenar por fecha y enumerar
+  rows <- rows[order(-as.numeric(as.POSIXct(rows$DATE))), ]
+  rows$N <- seq_len(nrow(rows))
+  rows <- rows[, c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")]
+
+  # Imprimir tabla principal
+  cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
+  print_attr_table(rows)
+
+  # Comentarios
+  # Comentarios en tabla
+  cat("\n💬 CHECKPOINT COMMENTS 💬\n\n")
+
+  # Construir tabla
+  comment_table <- data.frame(
+    N = rows$N,
+    COMMENT = vapply(seq_len(nrow(rows)), function(i) {
+      info <- list(stage = rows$STAGE[i], name = rows$NAME[i], version = rows$VERSION[i])
+      build_attr_comment(info, log)
+    }, character(1)),
+    stringsAsFactors = FALSE
+  )
+
+  # Calcular anchos
+  width_n <- max(nchar(as.character(comment_table$N)), nchar("N"))
+  width_c <- max(nchar(comment_table$COMMENT), nchar("COMMENT"))
+
+  # Imprimir encabezado
+  cat(sprintf("%-*s   %-*s\n", width_n, "N", width_c, "COMMENT"))
+  cat(paste(rep(".", width_n + width_c + 3), collapse = ""), "\n")
+
+  # Imprimir filas
+  for (i in seq_len(nrow(comment_table))) {
+    cat(sprintf("%-*d   %-*s\n", width_n, comment_table$N[i], width_c, comment_table$COMMENT[i]))
+  }
+
+
+  invisible(rows)
+}
+
 
