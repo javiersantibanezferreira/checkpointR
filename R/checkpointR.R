@@ -1449,6 +1449,30 @@ print_attr_comment <- function(name, comment, tag_comment) {
   invisible(df)
 }
 
+find_objid <- function(name, version = NULL, log = load_log()) {
+  # Filtrar por nombre
+  subset <- log[log$NAME == name & !log$IS_TAG, ]
+
+  if (nrow(subset) == 0) {
+    stop(paste0("❌ No checkpoint found with name '", name, "'."))
+  }
+
+  # Filtrar por versión si se especifica
+  if (!is.null(version)) {
+    subset <- subset[subset$VERSION == version, ]
+    if (nrow(subset) == 0) {
+      stop(paste0("❌ No checkpoint found with name '", name, "' and version ", version, "."))
+    }
+  } else {
+    # Elegir la versión más reciente
+    subset <- subset[order(-subset$DATE_UNIX), ]
+  }
+
+  # Elegir la primera fila
+  row <- subset[1, ]
+
+  return(row$ID)
+}
 
 attr1 <- function(strict = TRUE, envir = .GlobalEnv) {
   log <- load_log()
@@ -1512,35 +1536,31 @@ attr1 <- function(strict = TRUE, envir = .GlobalEnv) {
   invisible(rows)
 }
 
-attr2 <- function(obj) {
+attr2 <- function(ID = NULL) {
   log <- load_log()
-  info <- attr(obj, "checkpoint_info")
-
-  # Validación de checkpoint_info
-  if (is.null(info)) {
-    cat("⚠️ Object has no checkpoint_info. Load it using check_load() first.\n")
+  # Buscar en el log
+  row <- log[log$ID == ID & !log$IS_TAG, ]
+  if (nrow(row) == 0) {
+    cat("⚠️ No checkpoint found for ID:", ID, "\n")
     return(invisible(NULL))
   }
 
-  # Usar name real desde info
-  name <- info$name
+  row <- row[1, ]
+  info <- list(name = row$NAME, stage = row$STAGE, version = row$VERSION, ID = row$ID)
 
-  # Construir fila
-  row <- build_attr_row(name, info, log)
-  row$N <- 1
-  row <- as.data.frame(row)[, c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")]
+  row_data <- build_attr_row(name = obj_name, info = info, log = log)
+  row_data$N <- 1
+  df <- as.data.frame(row_data)[, c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")]
 
-  # Mostrar tabla
   cat("\n✅ ATTRIBUTES FOR SELECTED OBJECT ✅\n\n")
-  print_attr_table(row)
+  print_attr_table(df)
 
-  # Comentarios separados
   obj_comment <- build_attr_comment(info, log)
   tag_comment <- get_tag_comment(info, log)
 
-  # Imprimir tabla
-  print_attr_comment(name = name, comment = obj_comment, tag_comment = tag_comment)
+  print_attr_comment(name = obj_name, comment = obj_comment, tag_comment = tag_comment)
 
-
-  invisible(row)
+  invisible(df)
 }
+
+
