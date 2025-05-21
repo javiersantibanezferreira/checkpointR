@@ -534,6 +534,11 @@ check_tag <- function(tag, comment = "") {
   eligible_rows <- which(!log_df$IS_TAG & (is.na(log_df$TAG) | log_df$TAG == "") & log_df$DATE_UNIX > last_tag_time)
   log_df$TAG[eligible_rows] <- tag
 
+  if (length(eligible_rows) == 0) {
+    message("⚠️ No eligible checkpoints found. Tag was not created.")
+    return(invisible(NULL))
+  }
+
   # Crear fila nueva de tag
   tag_row <- data.frame(
     TAG = tag,
@@ -1331,7 +1336,7 @@ get_file_date <- function(stage, name, version) {
   if (file.exists(file_path)) {
     return(format(file.info(file_path)$ctime, "%Y-%m-%d %H:%M:%S"))
   } else {
-    return("Date not available")
+    return(NA_character_)  # 🔧 clave para evitar el error
   }
 }
 
@@ -1358,7 +1363,7 @@ build_attr_row <- function(name, info, log) {
     NAME = name,
     STAGE = info$stage,
     VERSION = info$version,
-    DATE = get_file_date(info$stage, name, info$version),
+    DATE = get_file_date(info$stage, info$name, info$version),
     TAG = tag
   )
 }
@@ -1416,36 +1421,76 @@ print_attr_table <- function(df) {
 
 }
 
-attr1 <- function(envir = .GlobalEnv) {
-  log <- load_log()
+print_attr_comment <- function(name, comment, tag_comment) {
+  comment <- ifelse(is.na(comment) || comment == "", "(no comment)", comment)
+  tag_comment <- ifelse(is.na(tag_comment) || tag_comment == "", "(no TAG comment)", tag_comment)
 
-  # Filtrar objetos cargados con metadata
+  df <- data.frame(
+    OBJ = c(name, "🏷️️"),
+    COMMENT = c(comment, tag_comment),
+    stringsAsFactors = FALSE
+  )
+
+  # Anchos de impresión
+  w1 <- max(nchar(c(df$OBJ, "OBJ"), type = "width"))
+  w2 <- max(nchar(c(df$COMMENT, "COMMENT"), type = "width"))
+
+  # Encabezado
+  cat("\n💬 COMMENT INCLUDING TAG 💬\n\n")
+  cat(sprintf("%-*s   %s\n", w1, "OBJ", "COMMENT"))
+  cat(paste(rep(".", w1 + 2 + w2), collapse = ""), "\n")
+
+  # Cuerpo (alineado)
+  for (j in 1:nrow(df)) {
+    obj <- format(df$OBJ[j], width = w1, justify = "left")
+    cat(obj, "   ", df$COMMENT[j], "\n", sep = "")
+  }
+
+  invisible(df)
+}
+
+
+attr1 <- function(strict = TRUE, envir = .GlobalEnv) {
+  log <- load_log()
+  log_ids <- log$ID
+
   env_objs <- ls(envir = envir)
   loaded <- lapply(env_objs, function(name) {
     obj <- get(name, envir)
     info <- attr(obj, "checkpoint_info")
-    if (!is.null(info)) build_attr_row(name, info, log) else NULL
+    if (!is.null(info)) {
+      if (strict) {
+        if (strict) {
+          # Validar que el nombre actual coincida con lo registrado en log
+          id_actual <- generate_id(stage = info$stage, name = name, version = info$version)
+          if (!(id_actual %in% log$ID)) return(NULL)
+        }
+
+      }
+      build_attr_row(name, info, log)
+    } else {
+      NULL
+    }
   })
+
   rows <- do.call(rbind, lapply(loaded, as.data.frame))
   if (is.null(rows) || nrow(rows) == 0) {
     cat("⚠️ No loaded checkpoints with metadata found.\n")
     return(invisible(NULL))
   }
 
-  # Ordenar por fecha y enumerar
+  # Ordenar y enumerar
+  rows <- rows[!is.na(rows$DATE), ]
   rows <- rows[order(-as.numeric(as.POSIXct(rows$DATE))), ]
   rows$N <- seq_len(nrow(rows))
   rows <- rows[, c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")]
 
-  # Imprimir tabla principal
+  # Tabla principal
   cat("\n✅ ATTRIBUTES FOR LOADED OBJECTS ✅\n\n")
   print_attr_table(rows)
 
-  # Comentarios
-  # Comentarios en tabla
+  # Tabla de comentarios
   cat("\n💬 CHECKPOINT COMMENTS 💬\n\n")
-
-  # Construir tabla
   comment_table <- data.frame(
     N = rows$N,
     COMMENT = vapply(seq_len(nrow(rows)), function(i) {
@@ -1455,21 +1500,47 @@ attr1 <- function(envir = .GlobalEnv) {
     stringsAsFactors = FALSE
   )
 
-  # Calcular anchos
   width_n <- max(nchar(as.character(comment_table$N)), nchar("N"))
   width_c <- max(nchar(comment_table$COMMENT), nchar("COMMENT"))
-
-  # Imprimir encabezado
   cat(sprintf("%-*s   %-*s\n", width_n, "N", width_c, "COMMENT"))
   cat(paste(rep(".", width_n + width_c + 3), collapse = ""), "\n")
 
-  # Imprimir filas
   for (i in seq_len(nrow(comment_table))) {
     cat(sprintf("%-*d   %-*s\n", width_n, comment_table$N[i], width_c, comment_table$COMMENT[i]))
   }
 
-
   invisible(rows)
 }
 
+attr2 <- function(obj) {
+  log <- load_log()
+  info <- attr(obj, "checkpoint_info")
 
+  # Validación de checkpoint_info
+  if (is.null(info)) {
+    cat("⚠️ Object has no checkpoint_info. Load it using check_load() first.\n")
+    return(invisible(NULL))
+  }
+
+  # Usar name real desde info
+  name <- info$name
+
+  # Construir fila
+  row <- build_attr_row(name, info, log)
+  row$N <- 1
+  row <- as.data.frame(row)[, c("N", "TAG", "NAME", "STAGE", "VERSION", "DATE")]
+
+  # Mostrar tabla
+  cat("\n✅ ATTRIBUTES FOR SELECTED OBJECT ✅\n\n")
+  print_attr_table(row)
+
+  # Comentarios separados
+  obj_comment <- build_attr_comment(info, log)
+  tag_comment <- get_tag_comment(info, log)
+
+  # Imprimir tabla
+  print_attr_comment(name = name, comment = obj_comment, tag_comment = tag_comment)
+
+
+  invisible(row)
+}
